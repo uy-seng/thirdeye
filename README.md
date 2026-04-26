@@ -6,6 +6,14 @@
 
 The intended way to use this project is as a source-built macOS application. The Python backend runs from the repository virtual environment, and `thirdeye.app` starts the local services it needs.
 
+## Prototype Demo
+
+<video src="assets/demo.mp4" controls width="100%"></video>
+
+This video shows a prototype version of `thirdeye` being used during a real-time seminar. The final macOS application works similarly, with additional functionality such as local screen capture.
+
+I built this after needing to attend a Google early career seminar that overlapped with my study schedule. The app lets me record and transcribe meetings so I can review the key information later.
+
 ## Author's Note
 
 This project might or might not be useful for you depending on your goals.
