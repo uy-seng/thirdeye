@@ -75,6 +75,12 @@ You will need the following runtime requirements configured before real captures
 - Desktop login credentials in `.env` as `DESKTOP_USER` and `DESKTOP_PASSWORD`.
 - If you want OpenClaw-backed summaries, a readable host config file at `~/.openclaw/openclaw.json` containing `gateway.auth.token`.
 
+## Security
+
+`thirdeye` is designed to run locally on your Mac. The app stores recordings, transcripts, summaries, artifacts, logs, and runtime state on your computer, not in a thirdeye-hosted cloud service.
+
+See [docs/security.md](docs/security.md) for the local runtime model, storage locations, macOS permissions, and external provider notes.
+
 ## Repository Layout
 
 | Path | Purpose |
@@ -89,7 +95,7 @@ You will need the following runtime requirements configured before real captures
 | `config/` | Seed configuration files for desktop helper services |
 | `runtime/` | Host-mounted runtime state, recordings, artifacts, SQLite DB, and logs |
 | `scripts/` | Bootstrap, smoke test, export, and OpenClaw remediation scripts |
-| `docs/` | Architecture, API, operations, and troubleshooting notes |
+| `docs/` | Architecture, API, security, operations, and troubleshooting notes |
 
 ## One-Time Setup
 
@@ -164,7 +170,7 @@ The root `requirements.txt` installs:
 - controller backend dependencies from `services/controller-api/requirements.txt`
 - `pytest` for the Python test suite
 
-### 4. Optional: build the macOS capture helper
+### 4. Build the macOS capture helper
 
 If you want to capture a local app, window, or display on this Mac, build the ScreenCaptureKit helper once:
 
