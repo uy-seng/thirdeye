@@ -417,36 +417,3 @@ runtime/artifacts/jobs/<job_id>/
   deepgram-events.jsonl
   controller-events.jsonl
 ```
-
-## Troubleshooting
-
-### OpenClaw auth failures
-
-- Run `make openclaw-sync` to verify the repo can read the token from `~/.openclaw/openclaw.json`.
-- Run `make up-openclaw` to recreate the Docker helper with the host token.
-- Reload the fresh tokenized dashboard URL instead of reusing a stale OpenClaw tab.
-
-### Desktop is up but no audio is captured
-
-- Check the Pulse monitor source in the desktop container.
-- Inspect `services/desktop-agent/scripts/detect_audio_source.sh`.
-- Review `ffmpeg-live-audio.log` and `ffmpeg-recording.log` inside the job output.
-
-### Deepgram is not producing transcripts
-
-- Verify `DEEPGRAM_API_KEY`.
-- Call the controller Deepgram test endpoint from the UI or API.
-- If `FAKE_MODE=true`, expect synthetic transcript behavior instead of real Deepgram traffic.
-
-### App loads but capture control fails
-
-- Confirm the API is running on `127.0.0.1:8788`.
-- Confirm the desktop agent is healthy on `127.0.0.1:8790/health`.
-- Check `runtime/controller/controller.db` and the controller logs from the `make dev-api` terminal.
-
-## Additional Documentation
-
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/operations.md`](docs/operations.md)
-- [`docs/api.md`](docs/api.md)
-- [`docs/troubleshooting.md`](docs/troubleshooting.md)
