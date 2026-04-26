@@ -2,7 +2,9 @@
   <img src="assets/logo.png" alt="thirdeye logo" width="280">
 </p>
 
-`thirdeye` is a macOS screen capture software with built-in LLM capabilities for live transcription and summary.
+`thirdeye` is a macOS screen capture app with built-in LLM capabilities for live transcription and summary.
+
+The intended way to use this project is as a source-built macOS application. The Python backend runs from the repository virtual environment, and `thirdeye.app` starts the local services it needs.
 
 ## Author's Note
 
@@ -31,16 +33,16 @@ The application is built using the following technologies:
 - **Tauri**: it allows me to build a native desktop application using web languages such as React.
 - **Openclaw**: this is mainly used as a gateway for LLM communication. Openclaw allows me to use my `codex subscription` through its `codex cli wrapper`. This means I use my `openai subscription` for API calls instead of their separate `API Billing` which incur extra cost. You can swap out this component if you want to use direct API calls for your LLM provider. In my setup, I am running this through `docker` for security purpose, but you can run it through anywhere.
 - **ScreenCaptureKit**: this is a mac native tool built using swift that allows me to do screen capture in mac.
-- **Docker**: it allows me to setup an isolated desktop that I can control without using any of my local browser for screen capture.
+- **Docker**: optional; it allows me to setup an isolated desktop that I can control without using any of my local browser for screen capture.
 - **Deepgram**: I use this for `speech-to-text` API for transcription. Deepgram gives you 200 dollars credit which I think is awesome. It cost about `0.46$` to do about 1 hour recording. So you can get pretty far with Deepgram API. I find the quality to be acceptable.
 
 ## Architecture
 
-- **thirdeye.app**: macOS app (built using tauri)
+- **thirdeye.app**: macOS app and main user interface, built with Tauri.
 - **macos-capture-agent**: FastAPI agent on `127.0.0.1:8791` for local macOS displays, applications, and windows.
 - **controller-api**: FastAPI service on `127.0.0.1:8788` for auth, job lifecycle, Deepgram relay, transcript rebroadcast, summaries, artifacts, and recovery.
-- **desktop**: Dockerized Chromium desktop with KasmVNC on `127.0.0.1:3000`, a desktop control API on `127.0.0.1:8790`, and the `ffmpeg` capture scripts.
-- **openclaw**: Docker helper on `127.0.0.1:18789` that act as a gateway for LLM calls.
+- **desktop**: optional Dockerized Chromium desktop with KasmVNC on `127.0.0.1:3000`, a desktop control API on `127.0.0.1:8790`, and the `ffmpeg` capture scripts.
+- **openclaw**: optional Docker helper on `127.0.0.1:18789` that act as a gateway for LLM calls.
 
 Recording and live transcription are decoupled:
 
@@ -54,10 +56,10 @@ Install these on the host machine before starting setup:
 
 | Prerequisite | Why it is needed | Notes |
 | --- | --- | --- |
-| Docker Desktop or Docker Engine with Compose v2 | Runs the isolated desktop and optional OpenClaw gateway | `docker compose` must be available |
+| Docker Desktop or Docker Engine with Compose v2 | Runs the optional isolated desktop and optional OpenClaw gateway | `docker compose` must be available only if you use those features |
 | GNU Make | Wraps the common build and run commands | Used by the repo `Makefile` |
 | Bash-compatible shell | Required by the repo scripts |  |
-| Python 3.12+ | Runs the local FastAPI controller and tests | Python 3.14 is recommended for local development |
+| Python 3.12+ | Creates the repository `.venv` and runs the local FastAPI services | Python 3.14 is recommended for local development |
 | Node.js 20.19+ | Runs the Tauri frontend tooling | `.nvmrc` pins the source-built app version |
 | npm | Installs frontend dependencies | Ships with Node.js |
 | Rust toolchain | Builds the macOS app shell | Required for `make macos-app-dev` and `make macos-app-build` |
@@ -91,13 +93,22 @@ You will need the following runtime requirements configured before real captures
 
 ## One-Time Setup
 
-### 1. Set up the source-built app
+### 1. Create the Python virtual environment and install the app
 
-This copies `.env.example` to `.env` if needed, creates runtime directories, installs Python dependencies, and installs the macOS app dependencies.
+All Python dependencies should live in the repository virtual environment at `.venv`. Do not install the backend dependencies into your global Python.
+
+This command copies `.env.example` to `.env` if needed, creates runtime directories, creates `.venv`, installs Python dependencies into `.venv`, and installs the macOS app dependencies under `apps/`.
 
 ```bash
 make setup
 make doctor
+```
+
+After setup, any manual Python command should either run through `make` or use the virtual environment directly:
+
+```bash
+source .venv/bin/activate
+python -m pytest tests/python -q
 ```
 
 ### 2. Review and edit `.env`
@@ -106,9 +117,12 @@ At minimum, update these values before real use:
 
 - `CONTROLLER_PASSWORD`
 - `SESSION_SECRET`
+- `DEEPGRAM_API_KEY`
+
+If you use the optional isolated Docker desktop, also update:
+
 - `DESKTOP_PASSWORD`
 - `PUID` and `PGID` to match your host user and group IDs
-- `DEEPGRAM_API_KEY`
 
 You can get the host IDs with:
 
@@ -132,15 +146,17 @@ Important environment variables from `.env.example`:
 | `OPENCLAW_SUMMARY_MODEL` | Optional | Summary model used via OpenClaw |
 | `RECORDING_FPS`, `RECORDING_WIDTH`, `RECORDING_HEIGHT` | Optional | Desktop recording defaults |
 | `MAX_DURATION_MINUTES`, `SILENCE_TIMEOUT_MINUTES`, `ENABLE_AUTO_STOP` | Optional | Capture stopping behavior |
-### 3. Optional: create the Python virtual environment manually
 
-`make setup` does this for you. If multiple Python versions are installed and you want to do it manually, use your Python 3.12+ executable explicitly.
+### 3. Manual virtual environment setup
+
+`make setup` does this for you. If multiple Python versions are installed and you want to create `.venv` yourself, use your Python 3.12+ executable explicitly, then run `make setup` afterward to finish the rest of the app setup.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+make setup
 ```
 
 The root `requirements.txt` installs:
@@ -148,17 +164,7 @@ The root `requirements.txt` installs:
 - controller backend dependencies from `services/controller-api/requirements.txt`
 - `pytest` for the Python test suite
 
-### 4. Optional: install macOS app dependencies
-
-If you want to run thirdeye as a macOS app:
-
-```bash
-make macos-app-install
-```
-
-This installs the Tauri launcher dependencies under `apps/`.
-
-### 5. Optional: build the macOS capture helper
+### 4. Optional: build the macOS capture helper
 
 If you want to capture a local app, window, or display on this Mac, build the ScreenCaptureKit helper once:
 
@@ -170,20 +176,21 @@ This produces `services/macos-capture-agent/bin/macos_capture_helper`.
 
 ## macOS App
 
-The Tauri app is the main product UI. It starts the FastAPI controller and the macOS capture agent, then talks directly to the local API at `127.0.0.1:8788`.
+The Tauri app is the main product UI and the recommended way to run thirdeye. It starts the FastAPI controller and the macOS capture agent from `.venv`, then talks directly to the local API at `127.0.0.1:8788`.
 
-For development:
+Run the source-built macOS app:
 
 ```bash
-make macos-app-install
 make macos-app-dev
 ```
 
-To build the app bundle:
+Build the macOS app bundle:
 
 ```bash
 make macos-app-build
 ```
+
+The app bundle and DMG are created by Tauri under `apps/tauri/target/release/bundle/`.
 
 Runtime data created by the app is stored under:
 
@@ -193,11 +200,13 @@ Runtime data created by the app is stored under:
 
 Use the app's capture settings button when macOS blocks local screen, app, window, or muted app-audio capture. The packaged app bundles the ScreenCaptureKit helper inside `thirdeye.app`, so the normal permission entry to allow is `thirdeye` in Screen & System Audio Recording. The first app build uses ad-hoc signing for local use; Developer ID signing and notarization are separate distribution steps.
 
-## Detailed Startup
+## Advanced Startup
 
-The controller is local-first. The app-managed macOS flow does not require Docker. Only the optional isolated desktop and optional OpenClaw gateway run in Docker.
+The controller is local-first. The app-managed macOS flow does not require Docker or manually starting the API services. Only the optional isolated desktop and optional OpenClaw gateway run in Docker.
 
-### 1. Build the Docker image
+Use this section when you want to run individual services from the terminal instead of letting `thirdeye.app` manage them.
+
+### 1. Optional: build the Docker image
 
 ```bash
 make build
@@ -342,7 +351,9 @@ On a normal day, the startup sequence is:
 make macos-app-dev
 ```
 
-Optional, when you need `This Mac` capture targets:
+This is the main workflow. It builds the macOS capture helper, starts the Tauri app, and lets the app manage the local Python services from `.venv`.
+
+Optional, when you are running the services manually and need `This Mac` capture targets:
 
 ```bash
 make macos-capture-up
@@ -383,10 +394,10 @@ make test-all
 
 ## Start Capture Workflow
 
-1. Open the isolated desktop and navigate to the public or authorized session manually.
-2. Start playback yourself if needed.
-3. Open `thirdeye.app` and sign in with `CONTROLLER_USERNAME` and `CONTROLLER_PASSWORD`.
-4. Click `Start Capture`.
+1. Open `thirdeye.app` and sign in with `CONTROLLER_USERNAME` and `CONTROLLER_PASSWORD`.
+2. Click `Start Capture`.
+3. Choose `This Mac` for a local screen, app, or window, or choose `Isolated desktop` if you started the optional Docker desktop.
+4. Start playback yourself if needed.
 5. The controller starts recording and the Deepgram relay in parallel.
 6. Monitor the live transcript in the app.
 
