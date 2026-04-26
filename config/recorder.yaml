@@ -1,0 +1,8 @@
+capture:
+  display: ${DISPLAY:-:0}
+  fps: ${RECORDING_FPS:-15}
+  width: ${RECORDING_WIDTH:-1280}
+  height: ${RECORDING_HEIGHT:-720}
+  video_codec: libx264
+  audio_codec: aac
+  audio_bitrate: 192k

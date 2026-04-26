@@ -1,0 +1,12 @@
+Title: {{title}}
+Duration: {{duration}}
+Transcript:
+{{transcript}}
+
+Return:
+1. Short summary paragraph
+2. Key points
+3. Action items
+4. Important names/dates
+5. Open questions
+6. Confidence / caveats

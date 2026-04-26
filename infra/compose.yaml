@@ -1,0 +1,125 @@
+services:
+  desktop:
+    build:
+      context: ..
+      dockerfile: infra/docker/desktop/Dockerfile
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+      CUSTOM_USER: ${DESKTOP_USER}
+      PASSWORD: ${DESKTOP_PASSWORD}
+      PIXELFLUX_WAYLAND: "false"
+      CHROME_CLI: --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --autoplay-policy=no-user-gesture-required
+      RECORDING_FPS: ${RECORDING_FPS}
+      RECORDING_WIDTH: ${RECORDING_WIDTH}
+      RECORDING_HEIGHT: ${RECORDING_HEIGHT}
+      SELKIES_MANUAL_WIDTH: ${RECORDING_WIDTH}
+      SELKIES_MANUAL_HEIGHT: ${RECORDING_HEIGHT}
+      FAKE_CAPTURE: ${FAKE_MODE}
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8790:8790"
+    shm_size: "2gb"
+    tmpfs:
+      - /tmp
+    volumes:
+      - "${THIRDEYE_RUNTIME_ROOT:-../runtime}/desktop-config:/config"
+      - "${THIRDEYE_RUNTIME_ROOT:-../runtime}/recordings:/recordings"
+    networks:
+      - capture_net
+    restart: unless-stopped
+    security_opt:
+      - seccomp=unconfined
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "if [ -x /opt/capture/services/desktop-agent/scripts/healthcheck.sh ]; then exec /opt/capture/services/desktop-agent/scripts/healthcheck.sh; fi; exec /opt/capture/desktop/scripts/healthcheck.sh",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:latest
+    profiles:
+      - openclaw
+    user: "0:0"
+    environment:
+      HOME: /home/node
+      BROWSER_CDP_URL: http://desktop:9222
+      BROWSER_EVALUATE_ENABLED: "true"
+      BROWSER_DEFAULT_PROFILE: viewer
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        mkdir -p /home/node/.openclaw /home/node/.openclaw/workspace
+        if [ ! -f /home/node/.openclaw/openclaw.json ]; then cp /seed/openclaw.jsonc /home/node/.openclaw/openclaw.json; fi
+        export OPENCLAW_GATEWAY_TOKEN="$$(node -e '
+          const fs = require("fs");
+          const path = "/home/node/.openclaw/openclaw.json";
+
+          const normalizeConfigText = (text) => {
+            let normalized = text;
+            while (normalized.endsWith("\\n")) {
+              normalized = normalized.slice(0, -2) + "\n";
+            }
+            return normalized;
+          };
+
+          let raw;
+          let payload;
+          try {
+            raw = fs.readFileSync(path, "utf8");
+            payload = JSON.parse(raw);
+          } catch (error) {
+            const fixed = normalizeConfigText(raw || "");
+            if (fixed === raw) {
+              console.error("Failed to read OpenClaw config from " + path + ": " + error.message);
+              process.exit(1);
+            }
+            payload = JSON.parse(fixed);
+            fs.writeFileSync(path, JSON.stringify(payload, null, 2) + "\n");
+          }
+
+          payload.gateway = payload.gateway || {};
+          payload.gateway.http = payload.gateway.http || {};
+          payload.gateway.http.endpoints = payload.gateway.http.endpoints || {};
+          payload.gateway.http.endpoints.responses = payload.gateway.http.endpoints.responses || {};
+          payload.gateway.http.endpoints.responses.enabled = true;
+          if (payload.gateway.bind === "loopback") {
+            payload.gateway.bind = "lan";
+          }
+          fs.writeFileSync(path, JSON.stringify(payload, null, 2) + "\n");
+
+          const token = payload?.gateway?.auth?.token;
+          if (typeof token !== "string" || token.length === 0) {
+            console.error("Failed to read OpenClaw token from " + path + ": gateway.auth.token missing");
+            process.exit(1);
+          }
+
+          process.stdout.write(token);
+        ')"
+        exec node dist/index.js gateway
+    ports:
+      - "127.0.0.1:18789:18789"
+    volumes:
+      - ${HOME}/.openclaw:/home/node/.openclaw
+      - ../config/openclaw.jsonc:/seed/openclaw.jsonc:ro
+    networks:
+      - capture_net
+    restart: unless-stopped
+    depends_on:
+      desktop:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18789/healthz >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+networks:
+  capture_net:

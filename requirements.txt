@@ -1,0 +1,2 @@
+-r services/controller-api/requirements.txt
+pytest==9.0.3

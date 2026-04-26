@@ -1,0 +1,48 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Python
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.pyc
+.coverage
+.coverage.*
+htmlcov/
+
+# JavaScript tooling
+apps/node_modules/
+apps/dist/
+.playwright-cli/
+coverage/
+
+# Build artifacts
+build/
+dist/
+exported-artifacts/
+services/macos-capture-agent/bin/
+target/
+apps/tauri/target/
+apps/tauri/gen/
+
+# Runtime state
+runtime/
+.superpowers/
+
+# OS noise
+.DS_Store
+*.log
+
+.tmp
+.archive

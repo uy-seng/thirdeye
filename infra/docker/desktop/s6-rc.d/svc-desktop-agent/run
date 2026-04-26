@@ -1,0 +1,3 @@
+#!/usr/bin/with-contenv bash
+
+exec s6-setuidgid "${ABC_USER:-abc}" /lsiopy/bin/python3 -m uvicorn thirdeye_desktop_agent.main:app --host 0.0.0.0 --port 8790

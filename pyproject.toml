@@ -1,0 +1,15 @@
+[project]
+name = "thirdeye"
+version = "0.1.0"
+description = "Local-first macOS capture and transcript controller."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+pythonpath = ["services/controller-api/src", "services/desktop-agent/src", "services/macos-capture-agent/src", "packages", "."]
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"

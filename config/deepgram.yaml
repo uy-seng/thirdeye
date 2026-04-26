@@ -1,0 +1,12 @@
+deepgram:
+  model: ${DEEPGRAM_MODEL:-nova-3}
+  language: ${DEEPGRAM_LANGUAGE:-}
+  diarize: ${DEEPGRAM_DIARIZE:-true}
+  smart_format: ${DEEPGRAM_SMART_FORMAT:-true}
+  interim_results: ${DEEPGRAM_INTERIM_RESULTS:-true}
+  vad_events: ${DEEPGRAM_VAD_EVENTS:-true}
+  endpointing_ms: ${DEEPGRAM_ENDPOINTING_MS:-300}
+  utterance_end_ms: ${DEEPGRAM_UTTERANCE_END_MS:-1000}
+  encoding: linear16
+  sample_rate: 16000
+  channels: 1

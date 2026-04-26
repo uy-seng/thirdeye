@@ -1,0 +1,49 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "thirdeye",
+  "version": "0.1.0",
+  "identifier": "com.thirdeye.desktop",
+  "build": {
+    "beforeDevCommand": "npm run capture:build && npm run ui:dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run capture:build && npm run ui:build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "thirdeye",
+        "titleBarStyle": "Transparent",
+        "backgroundColor": "#050505",
+        "theme": "Dark",
+        "width": 1040,
+        "height": 760,
+        "minWidth": 720,
+        "minHeight": 620
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "Productivity",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../services/macos-capture-agent/bin/macos_capture_helper": "macos_capture/bin/macos_capture_helper"
+    },
+    "macOS": {
+      "signingIdentity": "-"
+    }
+  }
+}

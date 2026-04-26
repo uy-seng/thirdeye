@@ -1,0 +1,49 @@
+{
+  gateway: {
+    mode: "local",
+    // Docker bridge traffic arrives on eth0, so loopback would isolate the
+    // gateway inside the container and make it unreachable to controller.
+    bind: "lan",
+    port: 18789,
+    auth: {
+      mode: "token",
+      token: "${OPENCLAW_GATEWAY_TOKEN}",
+      allowTailscale: false,
+      rateLimit: {
+        maxAttempts: 10,
+        windowMs: 60000,
+        lockoutMs: 300000,
+        exemptLoopback: true,
+      },
+    },
+    controlUi: {
+      allowedOrigins: ["http://127.0.0.1:18789", "http://localhost:18789"],
+    },
+    http: {
+      endpoints: {
+        responses: {
+          enabled: true,
+        },
+      },
+    },
+  },
+  agents: {
+    defaults: {
+      workspace: "/data/workspace",
+      repoRoot: "/data/workspace",
+      sandbox: {
+        mode: "off",
+      },
+    },
+  },
+  browser: {
+    enabled: true,
+    defaultProfile: "viewer",
+    profiles: {
+      viewer: {
+        color: "#0066CC",
+        cdpUrl: "http://desktop:9222",
+      },
+    },
+  },
+}
