@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local-first macOS capture and transcript controller."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = { text = "Personal Use Only" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]

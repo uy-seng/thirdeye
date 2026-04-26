@@ -442,3 +442,7 @@ runtime/artifacts/jobs/<job_id>/
   deepgram-events.jsonl
   controller-events.jsonl
 ```
+
+## License
+
+This project is licensed for personal, non-commercial use only. See [LICENSE](LICENSE) for details.
