@@ -8,9 +8,9 @@ The intended way to use this project is as a source-built macOS application. The
 
 ## Prototype Demo
 
-[![Prototype demo of thirdeye recording and transcribing a seminar](assets/demo-preview.gif)](assets/demo.mp4)
+[![Prototype demo of thirdeye recording and transcribing a seminar](https://img.youtube.com/vi/i6yKtiUTftY/maxresdefault.jpg)](https://youtu.be/i6yKtiUTftY)
 
-[Watch the full prototype demo](assets/demo.mp4)
+[Watch the prototype demo on YouTube](https://youtu.be/i6yKtiUTftY)
 
 This video shows a prototype version of `thirdeye` being used during a real-time seminar. The final macOS application works similarly, with additional functionality such as local screen capture.
 
