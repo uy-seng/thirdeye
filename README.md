@@ -8,7 +8,7 @@ The intended way to use this project is as a source-built macOS application. The
 
 ## Prototype Demo
 
-[Watch the prototype demo on YouTube](https://youtu.be/i6yKtiUTftY)
+<a href="https://youtu.be/i6yKtiUTftY" target="_blank" rel="noopener noreferrer">Watch the prototype demo on YouTube</a>
 
 This video shows a prototype version of `thirdeye` being used during a real-time seminar. The final macOS application works similarly, with additional functionality such as local screen capture.
 
