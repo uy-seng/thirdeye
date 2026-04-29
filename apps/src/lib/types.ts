@@ -98,6 +98,7 @@ export type JobMetadataJson = Record<string, unknown> & {
     record_screen?: boolean;
     generate_summary?: boolean;
     mute_target_audio?: boolean;
+    notify_on_inactivity?: boolean;
   } | null;
   finalization_checkpoint?: string | null;
   summary_status?: string | null;

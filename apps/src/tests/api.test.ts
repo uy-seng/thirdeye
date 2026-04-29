@@ -167,6 +167,8 @@ test("startCapture sends screen recording and summary preferences", async () => 
       record_screen: false,
       generate_summary: false,
       mute_target_audio: true,
+      notify_on_inactivity: false,
+      silence_timeout_minutes: 2,
       capture_target: {
         id: "display:1",
         kind: "display",
@@ -198,6 +200,8 @@ test("startCapture sends screen recording and summary preferences", async () => 
       record_screen: false,
       generate_summary: false,
       mute_target_audio: true,
+      notify_on_inactivity: false,
+      silence_timeout_minutes: 2,
     });
   } finally {
     globalThis.fetch = originalFetch;

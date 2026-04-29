@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(join(testDir, "../app/App.tsx"), "utf8");
+const stylesSource = readFileSync(join(testDir, "../styles.css"), "utf8");
 const navigationSource = readFileSync(join(testDir, "../components/navigation/Navigation.tsx"), "utf8");
 const serviceStripSource = readFileSync(join(testDir, "../components/services/ServiceStrip.tsx"), "utf8");
 const captureSource = readFileSync(join(testDir, "../features/capture/StartCapturePanel.tsx"), "utf8");
@@ -26,7 +27,16 @@ const source = [
   liveSummarySource,
 ].join("\n");
 const servicesSource = readFileSync(join(testDir, "../lib/services.ts"), "utf8");
+const notificationSource = readFileSync(join(testDir, "../lib/silence-notifications.ts"), "utf8");
+const silenceHookSource = readFileSync(join(testDir, "../lib/use-silence-notification.ts"), "utf8");
+const devScriptSource = readFileSync(join(testDir, "../../scripts/dev.sh"), "utf8");
+const tauriCargoSource = readFileSync(join(testDir, "../../tauri/Cargo.toml"), "utf8");
+const tauriBuildSource = readFileSync(join(testDir, "../../tauri/build.rs"), "utf8");
+const macosNotificationPath = join(testDir, "../../tauri/native/macos_notification.m");
 const tauriSource = readFileSync(join(testDir, "../../tauri/src/lib.rs"), "utf8");
+const tauriCapabilities = JSON.parse(readFileSync(join(testDir, "../../tauri/capabilities/default.json"), "utf8")) as {
+  permissions: string[];
+};
 
 test("shows the live view only when an active capture exists", () => {
   assert.match(navigationSource, /function Navigation\(\{ view, setView, liveAvailable \}/);
@@ -119,6 +129,15 @@ test("newly created captures are selected and loaded before opening the live vie
   assert.ok(handlerSource.indexOf('setView("live")') > handlerSource.indexOf("await loadSelectedJob(job.id)"));
 });
 
+test("disables new captures while another capture is active", () => {
+  assert.match(captureSource, /activeCapture\?: JobResponse \| null/);
+  assert.match(appSource, /<StartCapturePanel activeCapture=\{activeJob\} onCreated=\{\(job\) => void handleCaptureCreated\(job\)\} \/>/);
+  assert.match(captureSource, /const activeCaptureMessage = "Stop the current session before starting a new one\."/);
+  assert.match(captureSource, /if \(activeCapture\) \{\s*setMessage\(activeCaptureMessage\);\s*return;\s*\}/);
+  assert.match(captureSource, /disabled=\{Boolean\(activeCapture\) \|\| busy \|\| \(backend === "macos_local" && !selectedTarget\)\}/);
+  assert.match(captureSource, /\{busy \? "Starting\.\.\." : activeCapture \? "Session running" : "Start capture"\}/);
+});
+
 test("local capture permission errors show a recovery panel", () => {
   assert.match(captureTargetsSource, /function isScreenRecordingPermissionError\(message: string\)/);
   assert.match(captureTargetsSource, /screen_recording_permission_denied/);
@@ -140,8 +159,14 @@ test("app-managed services wait for spawned ports before reporting startup", () 
   const macosReconcile = tauriSource.slice(macosReconcileStart, controllerReconcileStart);
   const controllerReconcile = tauriSource.slice(controllerReconcileStart, spawnStart);
 
-  assert.match(macosReconcile, /spawn_app_service\([\s\S]*?\)\?;\s*wait_for_port_open\(MACOS_CAPTURE_PORT, "This Mac capture", Duration::from_secs\(10\)\)/);
-  assert.match(controllerReconcile, /spawn_app_service\([\s\S]*?\)\?;\s*wait_for_port_open\(CONTROLLER_API_PORT, "Controller API", Duration::from_secs\(10\)\)/);
+  assert.match(
+    macosReconcile,
+    /spawn_app_service\([\s\S]*?\)\?;\s*wait_for_port_open\(\s*MACOS_CAPTURE_PORT,\s*"This Mac capture",\s*Duration::from_secs\(10\),?\s*\)/,
+  );
+  assert.match(
+    controllerReconcile,
+    /spawn_app_service\([\s\S]*?\)\?;\s*wait_for_port_open\(\s*CONTROLLER_API_PORT,\s*"Controller API",\s*Duration::from_secs\(10\),?\s*\)/,
+  );
 });
 
 test("app-owned macOS capture agent is not restarted just because screen access is blocked", () => {
@@ -164,10 +189,27 @@ test("local capture picker groups selectable apps and windows by application", (
 
 test("start session exposes recording and summary options", () => {
   assert.match(captureSource, /Screen record/);
+  assert.match(captureSource, /Notify me about silence/);
+  assert.match(captureSource, /const \[notifyOnInactivity, setNotifyOnInactivity\] = useState\(true\);/);
+  assert.match(captureSource, /const TEST_NOTIFICATION_DELAY_MS = 15 \* 1000;/);
+  assert.match(captureSource, /startSilenceNotificationMonitor/);
+  assert.doesNotMatch(captureSource, /requestSilenceNotificationPermission/);
+  assert.doesNotMatch(captureSource, /openNotificationSettings/);
+  assert.doesNotMatch(captureSource, /Allow notifications/);
+  assert.doesNotMatch(captureSource, /sendNativeNotification/);
+  assert.match(captureSource, /async function sendTestNotification\(\)/);
+  assert.match(captureSource, /test-alert-\$\{Date\.now\(\)\}/);
+  assert.match(captureSource, /timeoutMs: TEST_NOTIFICATION_DELAY_MS/);
+  assert.match(captureSource, /oneShot: true/);
+  assert.match(captureSource, /alert: \{\s*title: "Test silence alert",\s*body: "This is a 15-second test using the same silence alert timer\.",\s*\}/);
+  assert.match(captureSource, /Test alert scheduled\. It will appear in 15 seconds\./);
+  assert.match(captureSource, /silence_timeout_minutes: SILENCE_NOTIFICATION_TIMEOUT_MINUTES/);
   assert.match(captureSource, /Mute this app for me/);
   assert.match(captureSource, /This mutes the selected app while capture runs\./);
   assert.doesNotMatch(captureSource, /Google Chrome/);
   assert.match(captureSource, /mute_target_audio: canMuteTargetAudio \? muteTargetAudio : false/);
+  assert.match(captureSource, /notify_on_inactivity: notifyOnInactivity/);
+  assert.match(captureSource, />\s*Test alert\s*</);
   assert.match(captureSource, /Generate summary/);
   assert.match(captureSource, /record_screen: screenRecord/);
   assert.match(captureSource, /generate_summary: generateSummary/);
@@ -184,4 +226,123 @@ test("live view exposes a runtime app mute toggle for active captures", () => {
   assert.match(liveControlsSource, /Unmute app/);
   assert.match(liveControlsSource, /canToggleTargetAudioMute/);
   assert.match(liveControlsSource, /targetAudioMuted/);
+});
+
+test("active captures start a native silence monitor outside the live view", () => {
+  assert.match(appSource, /@tauri-apps\/api\/event/);
+  assert.match(appSource, /type SilenceAppAlertPayload = \{/);
+  assert.match(appSource, /const \[silenceAlert, setSilenceAlert\] = useState<SilenceAppAlertPayload \| null>\(null\);/);
+  assert.match(appSource, /listen<SilenceAppAlertPayload>\("silence-alert",/);
+  assert.match(appSource, /setSilenceAlert\(event\.payload\)/);
+  assert.match(appSource, /className="silence-alert-region"/);
+  assert.match(appSource, /className="silence-alert"/);
+  assert.match(appSource, /role="alert"/);
+  assert.match(appSource, /Dismiss silence alert/);
+  assert.match(stylesSource, /\.silence-alert-region/);
+  assert.match(stylesSource, /position: fixed/);
+  assert.match(stylesSource, /top: 24px/);
+  assert.match(stylesSource, /right: 24px/);
+  assert.match(stylesSource, /\.silence-alert/);
+  assert.match(appSource, /useSilenceNotification\(activeJob,/);
+  assert.match(appSource, /async function handleCaptureCreated\(job: JobResponse\)/);
+  assert.match(notificationSource, /SILENCE_NOTIFICATION_TIMEOUT_MINUTES = 2/);
+  assert.match(notificationSource, /SILENCE_NOTIFICATION_TIMEOUT_MS = SILENCE_NOTIFICATION_TIMEOUT_MINUTES \* MINUTE_MS/);
+  assert.match(notificationSource, /EMPTY_TRANSCRIPT_NOTIFICATION_THRESHOLD = 3/);
+  assert.match(notificationSource, /EMPTY_TRANSCRIPT_IDLE_TICK_MS/);
+  assert.match(notificationSource, /isEmptyTranscriptResult/);
+  assert.match(notificationSource, /recordEmptyTranscriptResult/);
+  assert.match(notificationSource, /recordTranscriptIdleTick/);
+  assert.match(notificationSource, /recordEmptyTranscriptResultAndEvaluate/);
+  assert.match(notificationSource, /recordTranscriptIdleTickAndEvaluate/);
+  assert.match(notificationSource, /silenceNotificationTimeoutMsForJob/);
+  assert.doesNotMatch(notificationSource, /checkNativeNotificationPermission/);
+  assert.doesNotMatch(notificationSource, /requestNativeNotificationPermission/);
+  assert.doesNotMatch(notificationSource, /sendNativeNotification/);
+  assert.doesNotMatch(notificationSource, /@tauri-apps\/plugin-notification/);
+  assert.doesNotMatch(notificationSource, /sendNotification/);
+  assert.doesNotMatch(notificationSource, /requestPermission/);
+  assert.doesNotMatch(notificationSource, /isPermissionGranted/);
+  assert.doesNotMatch(notificationSource, /silenceNotificationIconUrl/);
+  assert.match(notificationSource, /SILENCE_ALERT_START_FAILED_MESSAGE/);
+  assert.match(silenceHookSource, /notifyOnInactivityEnabled\(job\)/);
+  assert.match(silenceHookSource, /function elapsedMsSince\(timestamp: string \| null\)/);
+  assert.match(silenceHookSource, /const timeoutMs = silenceNotificationTimeoutMsForJob\(activeJob\)/);
+  assert.match(
+    silenceHookSource,
+    /startSilenceNotificationMonitor\(\{\s*jobId: activeJob\.id,\s*title: activeJob\.title,\s*timeoutMs,\s*elapsedMs: elapsedMsSince\(activeJob\.started_at \?\? activeJob\.created_at\),/,
+  );
+  assert.match(silenceHookSource, /isEmptyTranscriptResult\(event\)/);
+  assert.match(silenceHookSource, /recordSilenceNotificationActivity\(activeJob\.id\)/);
+  assert.match(silenceHookSource, /stopSilenceNotificationMonitor\(activeJob\.id\)/);
+  assert.doesNotMatch(silenceHookSource, /window\.setInterval/);
+  assert.doesNotMatch(silenceHookSource, /window\.setTimeout/);
+  assert.match(silenceHookSource, /SILENCE_ALERT_START_FAILED_MESSAGE/);
+  assert.match(silenceHookSource, /new EventSource\(authenticatedApiUrl\(`\/api\/jobs\/\$\{activeJob\.id\}\/live\/stream`\)/);
+  assert.match(silenceHookSource, /isTranscriptActivity\(event\)/);
+  assert.match(servicesSource, /startSilenceNotificationMonitor/);
+  assert.match(servicesSource, /elapsedMs\?: number/);
+  assert.match(servicesSource, /alert\?: SilenceAlertPayload/);
+  assert.match(servicesSource, /oneShot\?: boolean/);
+  assert.match(servicesSource, /invoke\("start_silence_notification_monitor", \{ payload \}\)/);
+  assert.match(servicesSource, /recordSilenceNotificationActivity/);
+  assert.match(servicesSource, /invoke\("record_silence_notification_activity", \{ jobId \}\)/);
+  assert.match(servicesSource, /stopSilenceNotificationMonitor/);
+  assert.match(servicesSource, /invoke\("stop_silence_notification_monitor", \{ jobId \}\)/);
+  assert.doesNotMatch(tauriSource, /thirdeye_send_notification/);
+  assert.doesNotMatch(tauriSource, /notify_rust::Notification::new\(\)/);
+  assert.doesNotMatch(tauriSource, /fn send_native_notification/);
+  assert.doesNotMatch(tauriSource, /show_native_notification/);
+  assert.doesNotMatch(tauriSource, /open_notification_settings/);
+  assert.doesNotMatch(tauriSource, /NativeNotificationPayload/);
+  assert.match(tauriSource, /struct SilenceAlertPayload/);
+  assert.match(tauriSource, /struct SilenceNotificationMonitor/);
+  assert.match(tauriSource, /HashMap<String, SilenceNotificationJob>/);
+  assert.match(tauriSource, /alert: Option<SilenceAlertPayload>/);
+  assert.match(tauriSource, /one_shot: bool/);
+  assert.match(tauriSource, /silence-notifications\.log/);
+  assert.match(tauriSource, /fn log_silence_notification_event/);
+  assert.match(tauriSource, /silence-monitor start/);
+  assert.match(tauriSource, /silence-monitor waiting/);
+  assert.match(tauriSource, /silence-monitor notify/);
+  assert.match(tauriSource, /fn emit_silence_app_alert/);
+  assert.match(tauriSource, /"silence-alert"/);
+  assert.doesNotMatch(tauriSource, /UserAttentionType::Critical/);
+  assert.match(tauriSource, /window\.show\(\)/);
+  assert.match(tauriSource, /window\.unminimize\(\)/);
+  assert.match(tauriSource, /window\.maximize\(\)/);
+  assert.match(tauriSource, /window\.set_focus\(\)/);
+  assert.match(tauriSource, /log_window_attention_result\("maximize", job_id, generation, window\.maximize\(\)\)/);
+  assert.match(tauriSource, /log_window_attention_result\("focus", job_id, generation, window\.set_focus\(\)\)/);
+  assert.doesNotMatch(tauriSource, /request_user_attention/);
+  assert.match(tauriSource, /silence-monitor app-alert emitted/);
+  assert.match(tauriSource, /silence-monitor window \{action\} requested/);
+  assert.doesNotMatch(tauriSource, /silence-monitor dock attention/);
+  assert.match(tauriSource, /fn start_silence_notification_monitor\(/);
+  assert.match(tauriSource, /fn record_silence_notification_activity\(/);
+  assert.match(tauriSource, /fn stop_silence_notification_monitor\(/);
+  assert.match(tauriSource, /run_silence_notification_monitor/);
+  assert.doesNotMatch(tauriSource, /app\.notification\(\)\s*\.builder\(\)\s*\.title\(payload\.title\)\s*\.body\(payload\.body\)\s*\.show\(\)/);
+  assert.doesNotMatch(tauriSource, /tauri_plugin_notification::init\(\)/);
+  assert.doesNotMatch(tauriSource, /send_native_notification/);
+  assert.match(tauriSource, /start_silence_notification_monitor/);
+  assert.match(tauriSource, /record_silence_notification_activity/);
+  assert.match(tauriSource, /stop_silence_notification_monitor/);
+  assert.ok(!tauriCapabilities.permissions.includes("notification:default"));
+});
+
+test("macOS dev launcher starts the Vite dev server before opening Tauri", () => {
+  assert.match(devScriptSource, /VITE_PID/);
+  assert.match(devScriptSource, /trap cleanup EXIT INT TERM/);
+  assert.match(devScriptSource, /npm run ui:dev &/);
+  assert.ok(devScriptSource.indexOf("npm run ui:dev &") < devScriptSource.indexOf("DEP_TAURI_DEV=true cargo build"));
+  assert.match(devScriptSource, /wait_for_vite/);
+});
+
+test("native Notification Center plumbing is absent from silence alerts", () => {
+  assert.doesNotMatch(tauriCargoSource, /tauri-plugin-notification/);
+  assert.doesNotMatch(tauriCargoSource, /^cc = /m);
+  assert.doesNotMatch(tauriBuildSource, /native\/macos_notification\.m/);
+  assert.doesNotMatch(tauriBuildSource, /cc::Build/);
+  assert.doesNotMatch(tauriBuildSource, /framework=AppKit|framework=CoreServices|framework=Foundation/);
+  assert.equal(existsSync(macosNotificationPath), false);
 });

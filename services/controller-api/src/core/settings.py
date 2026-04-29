@@ -56,7 +56,7 @@ class Settings(BaseModel):
     deepgram_endpointing_ms: int = 300
     deepgram_utterance_end_ms: int = 1000
     max_duration_minutes: int = 60
-    silence_timeout_minutes: int = 5
+    silence_timeout_minutes: int = 2
     enable_auto_stop: bool = False
     controller_cors_origins: list[str] = Field(default_factory=list)
     fake_mode: bool = False
@@ -94,7 +94,7 @@ class Settings(BaseModel):
             deepgram_endpointing_ms=int(env.get("DEEPGRAM_ENDPOINTING_MS", "300")),
             deepgram_utterance_end_ms=int(env.get("DEEPGRAM_UTTERANCE_END_MS", "1000")),
             max_duration_minutes=int(env.get("MAX_DURATION_MINUTES", "60")),
-            silence_timeout_minutes=int(env.get("SILENCE_TIMEOUT_MINUTES", "5")),
+            silence_timeout_minutes=int(env.get("SILENCE_TIMEOUT_MINUTES", "2")),
             enable_auto_stop=env.get("ENABLE_AUTO_STOP", "false").lower() in {"1", "true", "yes", "on"},
             controller_cors_origins=[
                 origin.strip()
