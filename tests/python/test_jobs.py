@@ -93,6 +93,22 @@ def test_start_job_rejects_second_active_capture(client) -> None:
     assert second.status_code == 409
 
 
+def test_start_job_omits_legacy_notify_email_from_api_payloads(client) -> None:
+    login(client)
+
+    start = client.post(
+        "/api/jobs/start",
+        json={"title": "Authorized public livestream", "notify_email": "person@example.com"},
+    )
+
+    assert start.status_code == 200
+    start_payload = start.json()
+    assert "notify_email" not in start_payload
+
+    detail_payload = client.get(f"/api/jobs/{start_payload['id']}").json()
+    assert "notify_email" not in detail_payload
+
+
 def test_start_job_failure_marks_job_failed_and_allows_retry(client, monkeypatch) -> None:
     login(client)
     runtime = client.app.state.runtime
@@ -194,6 +210,7 @@ def test_start_job_can_skip_screen_recording_while_keeping_transcript_and_summar
     assert payload["recording_path"] is None
     assert payload["metadata_json"]["session_preferences"]["record_screen"] is False
     assert payload["metadata_json"]["session_preferences"]["generate_summary"] is True
+    assert payload["metadata_json"]["session_preferences"]["notify_on_inactivity"] is True
     assert not paths.recording.exists()
     assert "recording.mp4" not in artifact_names
     assert "transcript.txt" in artifact_names
@@ -610,6 +627,7 @@ def test_start_job_can_disable_final_summary_generation(client, monkeypatch) -> 
     assert called["summary"] is False
     assert payload["metadata_json"]["session_preferences"]["record_screen"] is True
     assert payload["metadata_json"]["session_preferences"]["generate_summary"] is False
+    assert payload["metadata_json"]["session_preferences"]["notify_on_inactivity"] is True
     assert payload["metadata_json"]["summary_status"] == "skipped"
     assert not paths.summary.exists()
     assert paths.transcript_text.exists()

@@ -1,12 +1,22 @@
+import { Bell } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { Button, Card, Select, TextInput } from "../../components/ui";
 import { getCaptureTargets, startCapture } from "../../lib/api";
+import { SILENCE_NOTIFICATION_TIMEOUT_MINUTES } from "../../lib/silence-notifications";
+import { startSilenceNotificationMonitor } from "../../lib/services";
 import type { CaptureBackend, CaptureTarget, JobResponse } from "../../lib/types";
 import { ScreenRecordingPermissionNotice } from "./ScreenRecordingPermissionNotice";
 import { isScreenRecordingPermissionError, targetGroups, targetLabel } from "./captureTargets";
 
-export function StartCapturePanel({ onCreated }: { onCreated: (job: JobResponse) => void }) {
+type StartCapturePanelProps = {
+  activeCapture?: JobResponse | null;
+  onCreated: (job: JobResponse) => void;
+};
+
+const TEST_NOTIFICATION_DELAY_MS = 15 * 1000;
+
+export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapturePanelProps) {
   const [title, setTitle] = useState("Authorized session");
   const [backend, setBackend] = useState<CaptureBackend>("macos_local");
   const [targets, setTargets] = useState<CaptureTarget[]>([]);
@@ -14,11 +24,13 @@ export function StartCapturePanel({ onCreated }: { onCreated: (job: JobResponse)
   const [screenRecord, setScreenRecord] = useState(true);
   const [muteTargetAudio, setMuteTargetAudio] = useState(false);
   const [generateSummary, setGenerateSummary] = useState(true);
+  const [notifyOnInactivity, setNotifyOnInactivity] = useState(true);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const selectedTarget = targets.find((target) => target.id === targetId);
   const permissionBlocked = backend === "macos_local" && isScreenRecordingPermissionError(message);
   const canMuteTargetAudio = backend === "macos_local" && Boolean(selectedTarget && ["application", "window"].includes(selectedTarget.kind));
+  const activeCaptureMessage = "Stop the current session before starting a new one.";
   const muteTargetHelp = "This mutes the selected app while capture runs. The transcript and recording still receive audio.";
 
   async function loadTargets(nextBackend = backend) {
@@ -52,8 +64,31 @@ export function StartCapturePanel({ onCreated }: { onCreated: (job: JobResponse)
     }
   }, [canMuteTargetAudio]);
 
+  async function sendTestNotification() {
+    setMessage("");
+    try {
+      await startSilenceNotificationMonitor({
+        jobId: `test-alert-${Date.now()}`,
+        title: "Test alert",
+        timeoutMs: TEST_NOTIFICATION_DELAY_MS,
+        alert: {
+          title: "Test silence alert",
+          body: "This is a 15-second test using the same silence alert timer.",
+        },
+        oneShot: true,
+      });
+      setMessage("Test alert scheduled. It will appear in 15 seconds.");
+    } catch {
+      setMessage("Unable to schedule the test alert.");
+    }
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (activeCapture) {
+      setMessage(activeCaptureMessage);
+      return;
+    }
     if (backend === "macos_local" && !selectedTarget) {
       setMessage("Choose what to capture before starting.");
       return;
@@ -69,6 +104,8 @@ export function StartCapturePanel({ onCreated }: { onCreated: (job: JobResponse)
           record_screen: screenRecord,
           generate_summary: generateSummary,
           mute_target_audio: canMuteTargetAudio ? muteTargetAudio : false,
+          notify_on_inactivity: notifyOnInactivity,
+          silence_timeout_minutes: SILENCE_NOTIFICATION_TIMEOUT_MINUTES,
         }),
       );
     } catch (error) {
@@ -131,6 +168,13 @@ export function StartCapturePanel({ onCreated }: { onCreated: (job: JobResponse)
             </span>
           </label>
           <label className="option-row">
+            <input checked={notifyOnInactivity} onChange={(event) => setNotifyOnInactivity(event.target.checked)} type="checkbox" />
+            <span>
+              <strong>Notify me about silence</strong>
+              <small>Get an alert if no words appear for 2 minutes.</small>
+            </span>
+          </label>
+          <label className="option-row">
             <input checked={generateSummary} onChange={(event) => setGenerateSummary(event.target.checked)} type="checkbox" />
             <span>
               <strong>Generate summary</strong>
@@ -139,14 +183,24 @@ export function StartCapturePanel({ onCreated }: { onCreated: (job: JobResponse)
           </label>
         </div>
         <div className="toolbar">
-          <Button disabled={busy || (backend === "macos_local" && !selectedTarget)} type="submit">
-            {busy ? "Starting..." : "Start capture"}
+          <Button disabled={Boolean(activeCapture) || busy || (backend === "macos_local" && !selectedTarget)} type="submit">
+            {busy ? "Starting..." : activeCapture ? "Session running" : "Start capture"}
           </Button>
           <Button onClick={() => void loadTargets()} type="button" variant="secondary">
             Refresh targets
           </Button>
+          <Button onClick={() => void sendTestNotification()} type="button" variant="secondary">
+            <Bell aria-hidden="true" size={16} />
+            Test alert
+          </Button>
         </div>
-        {permissionBlocked ? <ScreenRecordingPermissionNotice /> : message ? <p className="form-message">{message}</p> : null}
+        {permissionBlocked ? (
+          <ScreenRecordingPermissionNotice />
+        ) : activeCapture ? (
+          <p className="form-message">{activeCaptureMessage}</p>
+        ) : message ? (
+          <p className="form-message">{message}</p>
+        ) : null}
       </form>
     </Card>
   );

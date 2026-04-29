@@ -25,7 +25,7 @@ class Job(Base):
     state: Mapped[str] = mapped_column(Text, nullable=False, default=JobState.IDLE.value)
     max_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     auto_stop_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    silence_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    silence_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     deepgram_model: Mapped[str] = mapped_column(Text, nullable=False, default="nova-3")
     deepgram_language: Mapped[str | None] = mapped_column(Text, nullable=True)
     diarize: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -129,11 +129,11 @@ class JobCreate(BaseModel):
     diarize: bool | None = None
     smart_format: bool | None = None
     interim_results: bool | None = None
-    notify_email: str | None = None
     summary_model: str | None = None
     record_screen: bool = True
     generate_summary: bool = True
     mute_target_audio: bool = False
+    notify_on_inactivity: bool = True
     capture_backend: CaptureBackendName = "docker_desktop"
     capture_target: CaptureTarget | None = None
 
@@ -223,7 +223,6 @@ class JobResponse(BaseModel):
     diarize: bool
     smart_format: bool
     interim_results: bool
-    notify_email: str
     summary_model: str
     recording_path: str | None
     audio_path: str | None
@@ -258,7 +257,6 @@ class JobResponse(BaseModel):
             diarize=job.diarize,
             smart_format=job.smart_format,
             interim_results=job.interim_results,
-            notify_email=job.notify_email,
             summary_model=job.summary_model,
             recording_path=job.recording_path,
             audio_path=job.audio_path,

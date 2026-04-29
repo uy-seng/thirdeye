@@ -1,5 +1,6 @@
-import { RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { Bell, RefreshCw, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   deleteJob,
@@ -16,6 +17,7 @@ import { chooseSelectedJobId } from "../lib/job-selection";
 import { ACTIVE_STATES, canDeleteJob, canStopCapture } from "../lib/job-state";
 import { getServiceStatus, startLocalServices, stopLocalServices } from "../lib/services";
 import type { ArtifactFile, HealthStatusResponse, JobDetailResponse, JobResponse, ServiceStatus, SessionResponse } from "../lib/types";
+import { useSilenceNotification } from "../lib/use-silence-notification";
 import { LoginPanel } from "../components/auth/LoginPanel";
 import { Navigation } from "../components/navigation/Navigation";
 import { ServiceStrip } from "../components/services/ServiceStrip";
@@ -30,6 +32,12 @@ import type { View } from "./view";
 const deleteSuccessNotice = "Job deleted.";
 const stopRefreshIntervalMs = 1_500;
 const stopRefreshTimeoutMs = 180_000;
+
+type SilenceAppAlertPayload = {
+  jobId: string;
+  title: string;
+  body: string;
+};
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -49,11 +57,39 @@ export function App() {
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactFile[]>([]);
   const [notice, setNotice] = useState("Starting local services...");
+  const [silenceAlert, setSilenceAlert] = useState<SilenceAppAlertPayload | null>(null);
   const selectedJobIdRef = useRef<string | null>(null);
 
   const activeJob = useMemo(() => jobs.find((job) => ACTIVE_STATES.has(job.state)) ?? null, [jobs]);
   const visibleView = view === "live" && !activeJob ? "capture" : view;
   const liveJob = selectedJob?.id === activeJob?.id ? selectedJob : null;
+  const handleSilenceNotificationUnavailable = useCallback((message: string) => {
+    setNotice(message);
+  }, []);
+
+  useSilenceNotification(activeJob, handleSilenceNotificationUnavailable);
+
+  useEffect(() => {
+    let active = true;
+    let cleanup: (() => void) | null = null;
+
+    void listen<SilenceAppAlertPayload>("silence-alert", (event) => {
+      setSilenceAlert(event.payload);
+    }).then((unlisten) => {
+      if (active) {
+        cleanup = unlisten;
+      } else {
+        unlisten();
+      }
+    }).catch((error) => {
+      setNotice(error instanceof Error ? error.message : "Unable to listen for silence alerts.");
+    });
+
+    return () => {
+      active = false;
+      cleanup?.();
+    };
+  }, []);
 
   useEffect(() => {
     selectedJobIdRef.current = selectedJobId;
@@ -283,13 +319,27 @@ export function App() {
             </Button>
           </div>
         </header>
+        {silenceAlert ? (
+          <div className="silence-alert-region" aria-live="assertive">
+            <div className="silence-alert" role="alert">
+              <Bell aria-hidden="true" size={18} />
+              <div className="silence-alert-copy">
+                <strong>{silenceAlert.title}</strong>
+                <p>{silenceAlert.body}</p>
+              </div>
+              <Button aria-label="Dismiss silence alert" onClick={() => setSilenceAlert(null)} title="Dismiss silence alert" type="button" variant="secondary">
+                <X aria-hidden="true" size={16} />
+              </Button>
+            </div>
+          </div>
+        ) : null}
         {notice ? <p className="notice">{notice}</p> : null}
 
         {visibleView === "dashboard" ? (
           <div className="grid-two">
             <ServiceStrip onRefresh={() => void refreshStatus()} onStart={() => void handleStart()} onStop={() => void handleStopServices()} status={serviceStatus} />
             <HealthPanel health={health} />
-            <StartCapturePanel onCreated={(job) => void handleCaptureCreated(job)} />
+            <StartCapturePanel activeCapture={activeJob} onCreated={(job) => void handleCaptureCreated(job)} />
             <JobsTable jobs={jobs.slice(0, 6)} onSelect={(jobId) => {
               selectJob(jobId);
               setView("jobs");
@@ -297,7 +347,7 @@ export function App() {
           </div>
         ) : null}
 
-        {visibleView === "capture" ? <StartCapturePanel onCreated={(job) => void handleCaptureCreated(job)} /> : null}
+        {visibleView === "capture" ? <StartCapturePanel activeCapture={activeJob} onCreated={(job) => void handleCaptureCreated(job)} /> : null}
 
         {visibleView === "jobs" ? (
           <div className="grid-two">

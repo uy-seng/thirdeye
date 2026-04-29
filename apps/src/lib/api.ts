@@ -130,6 +130,8 @@ export function startCapture(payload: {
   record_screen: boolean;
   generate_summary: boolean;
   mute_target_audio: boolean;
+  notify_on_inactivity: boolean;
+  silence_timeout_minutes: number;
 }) {
   return apiJson<JobResponse>("/api/jobs/start", {
     method: "POST",
@@ -141,6 +143,8 @@ export function startCapture(payload: {
       record_screen: payload.record_screen,
       generate_summary: payload.generate_summary,
       mute_target_audio: payload.mute_target_audio,
+      notify_on_inactivity: payload.notify_on_inactivity,
+      silence_timeout_minutes: payload.silence_timeout_minutes,
     }),
   });
 }

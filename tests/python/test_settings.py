@@ -37,6 +37,14 @@ def test_settings_from_env_reads_macos_capture_base_url(monkeypatch) -> None:
     assert settings.macos_capture_base_url == "http://127.0.0.1:8791"
 
 
+def test_settings_from_env_defaults_silence_timeout_to_two_minutes(monkeypatch) -> None:
+    monkeypatch.delenv("SILENCE_TIMEOUT_MINUTES", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.silence_timeout_minutes == 2
+
+
 def test_settings_from_env_defaults_to_thirdeye_application_support(monkeypatch) -> None:
     monkeypatch.delenv("CONTROLLER_DB_PATH", raising=False)
     monkeypatch.delenv("ARTIFACTS_ROOT", raising=False)
