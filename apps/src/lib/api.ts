@@ -8,38 +8,19 @@ import type {
   HealthStatusResponse,
   JobDetailResponse,
   JobResponse,
-  SessionResponse,
   TranscriptSummaryGenerateResponse,
   VoiceNoteSummaryGenerateResponse,
 } from "./types";
 
 export const API_BASE = "http://127.0.0.1:8788";
-const API_ORIGIN = new URL(API_BASE).origin;
 const API_WS_BASE = API_BASE.replace(/^http/, "ws");
-const NATIVE_CLIENT_HEADER = "x-thirdeye-client";
-const NATIVE_CLIENT_VALUE = "macos";
-const API_TOKEN_QUERY_PARAM = "auth_token";
-
-let apiToken: string | null = null;
 
 export function apiUrl(path: string) {
   return new URL(path, API_BASE).toString();
 }
 
-export function authenticatedApiUrl(path: string) {
-  const url = new URL(path, API_BASE);
-  if (apiToken) {
-    url.searchParams.set(API_TOKEN_QUERY_PARAM, apiToken);
-  }
-  return url.toString();
-}
-
 export function voiceNoteLiveUrl() {
-  const url = new URL("/ws/voice-notes/live", API_WS_BASE);
-  if (apiToken) {
-    url.searchParams.set(API_TOKEN_QUERY_PARAM, apiToken);
-  }
-  return url.toString();
+  return new URL("/ws/voice-notes/live", API_WS_BASE).toString();
 }
 
 async function readPayload(response: Response) {
@@ -52,17 +33,12 @@ async function readPayload(response: Response) {
 
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  headers.set(NATIVE_CLIENT_HEADER, NATIVE_CLIENT_VALUE);
-  if (apiToken && !headers.has("authorization")) {
-    headers.set("authorization", `Bearer ${apiToken}`);
-  }
   if (init?.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
   const response = await fetch(apiUrl(path), {
     ...init,
     headers,
-    credentials: "include",
   });
   const payload = await readPayload(response);
   if (!response.ok) {
@@ -72,27 +48,6 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(typeof payload === "string" && payload ? payload : "Request failed.");
   }
   return payload as T;
-}
-
-export function getSession() {
-  return apiJson<SessionResponse>("/api/session");
-}
-
-export async function login(username: string, password: string) {
-  const session = await apiJson<SessionResponse>("/api/session/login", {
-    method: "POST",
-    body: JSON.stringify({ username, password }),
-  });
-  apiToken = session.api_token ?? null;
-  return session;
-}
-
-export async function logout() {
-  try {
-    return await apiJson<SessionResponse>("/api/session/logout", { method: "POST" });
-  } finally {
-    apiToken = null;
-  }
 }
 
 export function getJobs() {
@@ -182,9 +137,5 @@ export function deleteJob(jobId: string) {
 }
 
 export function artifactHref(downloadUrl: string) {
-  const url = new URL(downloadUrl, API_BASE);
-  if (apiToken && url.origin === API_ORIGIN) {
-    url.searchParams.set(API_TOKEN_QUERY_PARAM, apiToken);
-  }
-  return url.toString();
+  return new URL(downloadUrl, API_BASE).toString();
 }

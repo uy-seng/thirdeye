@@ -6,12 +6,10 @@ import json
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from starlette.middleware.sessions import SessionMiddleware
 
-from core.auth import authenticated_api_user, current_api_user, issue_api_token, native_client_requested, revoke_api_token
 from jobs.jobs import (
     CaptureConflictError,
     CaptureMuteError,
@@ -28,8 +26,6 @@ from jobs.models import (
     JobCreate,
     JobMuteTargetAudioRequest,
     JobStopRequest,
-    SessionCredentials,
-    SessionResponse,
     TranscriptSummaryGenerateRequest,
     TranscriptSummarySaveRequest,
     VoiceNoteSummaryGenerateRequest,
@@ -164,12 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(SessionMiddleware, secret_key=app_settings.session_secret)
     app.state.runtime = runtime
-    app.state.api_tokens = {}
-    def session_payload(request: Request) -> SessionResponse:
-        user = authenticated_api_user(request)
-        return SessionResponse(authenticated=bool(user), username=user)
 
     async def desktop_health_payload() -> HealthCheckResult:
         try:
@@ -208,39 +199,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ]
         )
 
-    @app.get("/api/session")
-    async def session_status(request: Request) -> JSONResponse:
-        return JSONResponse(session_payload(request).model_dump())
-
-    @app.post("/api/session/login")
-    async def login_json(request: Request, payload: SessionCredentials) -> JSONResponse:
-        if payload.username != app_settings.controller_username or payload.password != app_settings.controller_password:
-            return JSONResponse({"detail": "invalid credentials"}, status_code=401)
-        request.session["user"] = payload.username
-        response_payload = session_payload(request).model_dump()
-        if native_client_requested(request):
-            response_payload["api_token"] = issue_api_token(request, payload.username)
-        return JSONResponse(response_payload)
-
-    @app.post("/api/session/logout")
-    async def logout_json(request: Request) -> JSONResponse:
-        revoke_api_token(request)
-        request.session.clear()
-        return JSONResponse(session_payload(request).model_dump())
-
     @app.get("/api/jobs")
-    async def list_jobs(_: str = Depends(current_api_user)) -> JSONResponse:
+    async def list_jobs() -> JSONResponse:
         return JSONResponse([job.model_dump() for job in runtime.jobs.list_jobs()])
 
     @app.get("/api/jobs/{job_id}")
-    async def get_job(job_id: str, _: str = Depends(current_api_user)) -> JSONResponse:
+    async def get_job(job_id: str) -> JSONResponse:
         payload = runtime.jobs.get_job(job_id).model_dump()
         payload["timeline"] = [item.model_dump() for item in runtime.jobs.list_transitions(job_id)]
         payload["live_snapshot"] = runtime.transcript_store.snapshot(job_id)
         return JSONResponse(payload)
 
     @app.post("/api/jobs/start")
-    async def start_job(payload: JobCreate, _: str = Depends(current_api_user)) -> JSONResponse:
+    async def start_job(payload: JobCreate) -> JSONResponse:
         try:
             job = await runtime.capture.start_capture(payload)
         except CaptureConflictError as exc:
@@ -250,7 +221,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(job.model_dump())
 
     @app.get("/api/capture/targets")
-    async def capture_targets(backend: str, _: str = Depends(current_api_user)) -> JSONResponse:
+    async def capture_targets(backend: str) -> JSONResponse:
         active_job = runtime.jobs.active_job()
         if active_job is not None and active_job.capture_backend == backend:
             payload = CaptureTargetsResponse(backend=backend, targets=[active_job.capture_target])
@@ -267,7 +238,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(payload.model_dump())
 
     @app.post("/api/jobs/{job_id}/stop")
-    async def stop_job(job_id: str, payload: JobStopRequest | None = None, _: str = Depends(current_api_user)) -> JSONResponse:
+    async def stop_job(job_id: str, payload: JobStopRequest | None = None) -> JSONResponse:
         try:
             job = await runtime.capture.dispatch_stop_capture(job_id, skip_summary=bool(payload and payload.skip_summary))
         except KeyError as exc:
@@ -278,7 +249,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def mute_target_audio(
         job_id: str,
         payload: JobMuteTargetAudioRequest,
-        _: str = Depends(current_api_user),
     ) -> JSONResponse:
         try:
             job = await runtime.capture.set_target_audio_muted(job_id, payload.mute_target_audio)
@@ -293,7 +263,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(job.model_dump())
 
     @app.post("/api/jobs/{job_id}/summary/rerun")
-    async def rerun_summary(job_id: str, _: str = Depends(current_api_user)) -> JSONResponse:
+    async def rerun_summary(job_id: str) -> JSONResponse:
         try:
             job = await runtime.capture.dispatch_summary_rerun(job_id=job_id)
         except KeyError as exc:
@@ -301,7 +271,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(job.model_dump(), status_code=202)
 
     @app.post("/api/jobs/{job_id}/recover")
-    async def recover_job(job_id: str, _: str = Depends(current_api_user)) -> JSONResponse:
+    async def recover_job(job_id: str) -> JSONResponse:
         try:
             job = await runtime.capture.dispatch_recover_capture(job_id=job_id)
         except KeyError as exc:
@@ -314,7 +284,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def generate_transcript_summary(
         job_id: str,
         payload: TranscriptSummaryGenerateRequest,
-        _: str = Depends(current_api_user),
     ) -> JSONResponse:
         try:
             result = await runtime.transcript_prompts.generate(job_id=job_id, prompt=payload.prompt)
@@ -330,7 +299,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def save_transcript_summary(
         job_id: str,
         payload: TranscriptSummarySaveRequest,
-        _: str = Depends(current_api_user),
     ) -> JSONResponse:
         try:
             artifact = runtime.transcript_prompts.save(job_id=job_id, request_id=payload.request_id)
@@ -343,7 +311,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/voice-notes/summary/generate")
     async def generate_voice_note_summary(
         payload: VoiceNoteSummaryGenerateRequest,
-        _: str = Depends(current_api_user),
     ) -> JSONResponse:
         transcript = payload.transcript.strip()
         prompt = payload.prompt.strip()
@@ -368,7 +335,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(response.model_dump())
 
     @app.post("/api/jobs/{job_id}/cleanup")
-    async def cleanup_job(job_id: str, _: str = Depends(current_api_user)) -> JSONResponse:
+    async def cleanup_job(job_id: str) -> JSONResponse:
         try:
             job = runtime.jobs.cleanup_job(job_id)
         except KeyError as exc:
@@ -378,7 +345,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(job.model_dump())
 
     @app.post("/api/jobs/{job_id}/delete")
-    async def delete_job(job_id: str, _: str = Depends(current_api_user)) -> JSONResponse:
+    async def delete_job(job_id: str) -> JSONResponse:
         try:
             job = runtime.jobs.delete_job(job_id)
         except KeyError as exc:
@@ -388,16 +355,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(job.model_dump())
 
     @app.get("/api/jobs/{job_id}/artifacts")
-    async def list_artifacts(job_id: str, _: str = Depends(current_api_user)) -> JSONResponse:
+    async def list_artifacts(job_id: str) -> JSONResponse:
         artifacts = runtime.artifacts.list_files(job_id, app_settings.controller_base_url)
         return JSONResponse(artifacts.model_dump())
 
     @app.get("/api/artifacts")
-    async def artifacts_overview(_: str = Depends(current_api_user)) -> JSONResponse:
+    async def artifacts_overview() -> JSONResponse:
         return JSONResponse(artifacts_overview_payload().model_dump())
 
     @app.get("/api/jobs/{job_id}/live/stream")
-    async def live_stream(job_id: str, _: str = Depends(current_api_user)) -> StreamingResponse:
+    async def live_stream(job_id: str) -> StreamingResponse:
         try:
             runtime.jobs.get_job(job_id)
         except KeyError as exc:
@@ -446,29 +413,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"status": "ok"})
 
     @app.get("/api/settings/health")
-    async def settings_health(_: str = Depends(current_api_user)) -> JSONResponse:
+    async def settings_health() -> JSONResponse:
         return JSONResponse((await health_status_payload()).model_dump())
 
     @app.get("/api/settings/test/deepgram")
-    async def deepgram_test(_: str = Depends(current_api_user)) -> JSONResponse:
+    async def deepgram_test() -> JSONResponse:
         return JSONResponse((await deepgram_health_payload()).details)
 
     @app.get("/api/settings/test/desktop")
-    async def desktop_test(_: str = Depends(current_api_user)) -> JSONResponse:
+    async def desktop_test() -> JSONResponse:
         try:
             return JSONResponse(await runtime.desktop.health())
         except RuntimeError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=502)
 
     @app.get("/api/settings/test/openclaw")
-    async def openclaw_test(_: str = Depends(current_api_user)) -> JSONResponse:
+    async def openclaw_test() -> JSONResponse:
         try:
             return JSONResponse(await runtime.openclaw.health())
         except Exception as exc:
             return JSONResponse({"detail": str(exc)}, status_code=502)
 
     @app.get("/artifacts/{job_id}/{filename}")
-    async def artifact_download(job_id: str, filename: str, _: str = Depends(current_api_user)) -> FileResponse:
+    async def artifact_download(job_id: str, filename: str) -> FileResponse:
         path = runtime.artifacts.job_paths(job_id).root / filename
         return FileResponse(path)
 

@@ -16,12 +16,6 @@ export type CommandResult = {
   runtime_root: string;
 };
 
-export type SessionResponse = {
-  authenticated: boolean;
-  username: string | null;
-  api_token?: string;
-};
-
 export type CaptureBackend = "docker_desktop" | "macos_local";
 
 export type CaptureTarget = {

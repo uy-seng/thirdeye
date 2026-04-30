@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import Boolean, DateTime, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,7 +31,6 @@ class Job(Base):
     diarize: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     smart_format: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     interim_results: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    notify_email: Mapped[str] = mapped_column(Text, nullable=False, default="")
     summary_model: Mapped[str] = mapped_column(Text, nullable=False, default=OPENCLAW_SUMMARY_MODEL_DEFAULT)
     recording_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -119,6 +118,8 @@ def capture_selection_from_metadata(metadata: dict[str, Any]) -> tuple[CaptureBa
 
 
 class JobCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str
     source_url: str | None = None
     max_duration_minutes: int | None = None
@@ -146,16 +147,6 @@ class JobCreate(BaseModel):
             if self.capture_target is None or self.capture_target.kind not in {"application", "window"}:
                 raise ValueError("mute_target_audio requires an app or window target")
         return self
-
-
-class SessionCredentials(BaseModel):
-    username: str
-    password: str
-
-
-class SessionResponse(BaseModel):
-    authenticated: bool
-    username: str | None
 
 
 class TranscriptSummaryGenerateRequest(BaseModel):

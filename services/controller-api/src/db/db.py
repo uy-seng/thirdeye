@@ -30,5 +30,10 @@ def ensure_schema_compatibility(engine: Engine) -> None:
             return
 
         columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(jobs)")}
-        if "notify_email" not in columns:
-            connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN notify_email TEXT NOT NULL DEFAULT ''")
+        expected_columns = set(Base.metadata.tables["jobs"].columns.keys())
+        for column in sorted(columns - expected_columns):
+            connection.exec_driver_sql(f'ALTER TABLE jobs DROP COLUMN {_quote_identifier(column)}')
+
+
+def _quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'

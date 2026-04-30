@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge, Button, Card, TextArea, TextInput } from "../../components/ui";
 import { generateVoiceNoteSummary, voiceNoteLiveUrl } from "../../lib/api";
+import { getDefaultVoiceNoteSummaryPrompt } from "../../lib/prompts";
 import { encodeLinear16, mergedTranscriptText, mergeTranscriptEvent } from "../../lib/voice-note-audio";
 import {
   createVoiceNote,
@@ -23,7 +24,6 @@ type SummaryState = {
 
 const recorderIntervalMs = 250;
 const transcriptionTimeoutMs = 5_000;
-const defaultVoiceNoteSummaryPrompt = "Summarize the key points and any follow-up actions.";
 
 function createId() {
   return globalThis.crypto?.randomUUID?.() ?? `voice-note-${Date.now()}`;
@@ -373,7 +373,7 @@ export function VoiceNotesPanel() {
       const result = await generateVoiceNoteSummary({
         title: note.title,
         transcript,
-        prompt: defaultVoiceNoteSummaryPrompt,
+        prompt: getDefaultVoiceNoteSummaryPrompt(),
       });
       const summary: NonNullable<VoiceNote["summary"]> = {
         markdown: result.markdown,

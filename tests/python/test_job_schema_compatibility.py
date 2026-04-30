@@ -6,7 +6,7 @@ from api.runtime import create_runtime
 from jobs.models import JobCreate
 
 
-def test_job_creation_supports_existing_notify_email_column(settings) -> None:
+def test_job_creation_removes_obsolete_job_columns(settings) -> None:
     settings.controller_db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(settings.controller_db_path) as connection:
         connection.execute(
@@ -27,7 +27,7 @@ def test_job_creation_supports_existing_notify_email_column(settings) -> None:
                 diarize BOOLEAN NOT NULL,
                 smart_format BOOLEAN NOT NULL,
                 interim_results BOOLEAN NOT NULL,
-                notify_email TEXT NOT NULL,
+                legacy_contact TEXT NOT NULL,
                 summary_model TEXT NOT NULL,
                 recording_path TEXT,
                 audio_path TEXT,
@@ -48,9 +48,13 @@ def test_job_creation_supports_existing_notify_email_column(settings) -> None:
     job = runtime.jobs.create_job(JobCreate(title="Legacy schema capture"))
 
     assert job.title == "Legacy schema capture"
+    assert not hasattr(job, "legacy_contact")
+    with sqlite3.connect(settings.controller_db_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
+    assert "legacy_contact" not in columns
 
 
-def test_job_creation_adds_missing_notify_email_column(settings) -> None:
+def test_job_creation_keeps_obsolete_job_columns_out_of_new_schema(settings) -> None:
     settings.controller_db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(settings.controller_db_path) as connection:
         connection.execute(
@@ -90,7 +94,8 @@ def test_job_creation_adds_missing_notify_email_column(settings) -> None:
 
     job = runtime.jobs.create_job(JobCreate(title="Missing column capture"))
 
-    assert job.notify_email == ""
+    assert job.title == "Missing column capture"
+    assert not hasattr(job, "legacy_contact")
     with sqlite3.connect(settings.controller_db_path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
-    assert "notify_email" in columns
+    assert "legacy_contact" not in columns

@@ -20,7 +20,7 @@ The controller package will use focused folders:
 - `capture/` for capture backend orchestration and desktop execution.
 - `transcripts/` for Deepgram, live transcript, transcript storage, and summary prompt code.
 - `integrations/` for OpenClaw and page monitor clients.
-- `notifications/` for email notification composition.
+- notification composition belongs with the local app notification flow.
 - `web_assets/` for legacy FastAPI templates and static assets.
 
 ## Compatibility Strategy

@@ -1,0 +1,7 @@
+Session title: $title
+
+Operator request:
+$prompt
+
+Transcript snapshot:
+$transcript

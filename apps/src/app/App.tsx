@@ -8,17 +8,14 @@ import {
   getHealth,
   getJob,
   getJobs,
-  getSession,
-  logout,
   setTargetAudioMuted,
   stopCapture,
 } from "../lib/api";
 import { chooseSelectedJobId } from "../lib/job-selection";
 import { ACTIVE_STATES, canDeleteJob, canStopCapture } from "../lib/job-state";
 import { getServiceStatus, startLocalServices, stopLocalServices } from "../lib/services";
-import type { ArtifactFile, HealthStatusResponse, JobDetailResponse, JobResponse, ServiceStatus, SessionResponse } from "../lib/types";
+import type { ArtifactFile, HealthStatusResponse, JobDetailResponse, JobResponse, ServiceStatus } from "../lib/types";
 import { useSilenceNotification } from "../lib/use-silence-notification";
-import { LoginPanel } from "../components/auth/LoginPanel";
 import { Navigation } from "../components/navigation/Navigation";
 import { ServiceStrip } from "../components/services/ServiceStrip";
 import { Button } from "../components/ui";
@@ -58,7 +55,6 @@ function viewTitle(view: View) {
 
 export function App() {
   const [view, setView] = useState<View>("dashboard");
-  const [session, setSession] = useState<SessionResponse | null>(null);
   const [serviceStatus, setServiceStatus] = useState<ServiceStatus | null>(null);
   const [health, setHealth] = useState<HealthStatusResponse | null>(null);
   const [jobs, setJobs] = useState<JobResponse[]>([]);
@@ -163,9 +159,6 @@ export function App() {
 
   async function refreshControllerData() {
     try {
-      const current = await getSession();
-      setSession(current);
-      if (!current.authenticated) return;
       const [nextJobs, nextHealth] = await Promise.all([getJobs(), getHealth()]);
       setJobs(nextJobs);
       setHealth(nextHealth);
@@ -221,13 +214,6 @@ export function App() {
   useEffect(() => {
     setNotice((currentNotice) => (currentNotice === deleteSuccessNotice ? "" : currentNotice));
   }, [view]);
-
-  if (session && !session.authenticated) {
-    return <LoginPanel onLogin={(nextSession) => {
-      setSession(nextSession);
-      void refreshControllerData();
-    }} />;
-  }
 
   async function handleStart() {
     setNotice((await startLocalServices()).detail);
@@ -326,9 +312,6 @@ export function App() {
             <Button onClick={() => void refreshControllerData()} variant="quiet">
               <RefreshCw aria-hidden="true" size={16} />
               Refresh
-            </Button>
-            <Button onClick={() => void logout().then(setSession)} variant="secondary">
-              Sign out
             </Button>
           </div>
         </header>

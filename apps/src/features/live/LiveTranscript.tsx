@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Badge, Card } from "../../components/ui";
-import { authenticatedApiUrl } from "../../lib/api";
+import { apiUrl } from "../../lib/api";
 import { readableState, stateTone } from "../../lib/job-state";
 import { advanceInitialReplayState, buildTranscriptFeed, createInitialReplayState, shouldRenderTranscriptLine } from "../../lib/live-transcript";
 import type { JobDetailResponse, TranscriptBlock } from "../../lib/types";
@@ -37,7 +37,7 @@ export function LiveTranscript({ job }: { job: JobDetailResponse | null }) {
     if (!job) return;
     setStreamMessage("Connecting to live transcript...");
     let replay = createInitialReplayState(job.live_snapshot);
-    const stream = new EventSource(authenticatedApiUrl(`/api/jobs/${job.id}/live/stream`), { withCredentials: true });
+    const stream = new EventSource(apiUrl(`/api/jobs/${job.id}/live/stream`));
     stream.onopen = () => {
       setStreamMessage("Live transcript connected.");
     };

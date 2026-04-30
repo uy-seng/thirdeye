@@ -8,9 +8,6 @@ from core.settings import Settings
 
 def test_websocket_url_includes_vad_events_when_enabled(tmp_path) -> None:
     settings = Settings(
-        controller_username="operator",
-        controller_password="secret-pass",
-        session_secret="session-secret",
         controller_db_path=tmp_path / "controller.db",
         artifacts_root=tmp_path / "artifacts",
         recordings_root=tmp_path / "recordings",
@@ -35,9 +32,6 @@ def test_websocket_url_includes_vad_events_when_enabled(tmp_path) -> None:
 
 def test_websocket_url_can_accept_browser_voice_note_pcm(tmp_path) -> None:
     settings = Settings(
-        controller_username="operator",
-        controller_password="secret-pass",
-        session_secret="session-secret",
         controller_db_path=tmp_path / "controller.db",
         artifacts_root=tmp_path / "artifacts",
         recordings_root=tmp_path / "recordings",

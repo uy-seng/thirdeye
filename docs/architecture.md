@@ -3,7 +3,7 @@
 The stack is a macOS desktop app with local services behind it:
 
 - `thirdeye.app` is the canonical Tauri macOS app and user interface.
-- `controller-api` runs locally on `127.0.0.1:8788` and owns job state, Deepgram streaming, transcript rebroadcast, summarization, email, artifact serving, and recovery.
+- `controller-api` runs locally on `127.0.0.1:8788` and owns job state, Deepgram streaming, transcript rebroadcast, summarization, artifact serving, and recovery.
 - `macos-capture-agent` is an app-managed host-local process that exposes the recording/live-audio contract for local macOS displays, applications, and windows.
 - `desktop` is optional and owns the Docker browser session, display, Pulse monitor source, and both `ffmpeg` pipelines.
 - `openclaw` is an optional Docker helper that attaches to the desktop browser over remote CDP.

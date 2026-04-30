@@ -82,7 +82,6 @@ class JobRepository:
                 diarize=self.settings.deepgram_diarize if payload.diarize is None else payload.diarize,
                 smart_format=self.settings.deepgram_smart_format if payload.smart_format is None else payload.smart_format,
                 interim_results=self.settings.deepgram_interim_results if payload.interim_results is None else payload.interim_results,
-                notify_email="",
                 summary_model=payload.summary_model or self.settings.openclaw_summary_model,
                 recording_path=str(paths.recording) if payload.record_screen else None,
                 audio_path=str(stage_audio),

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { authenticatedApiUrl } from "./api";
+import { apiUrl } from "./api";
 import {
   SILENCE_ALERT_START_FAILED_MESSAGE,
   isEmptyTranscriptResult,
@@ -38,7 +38,7 @@ export function useSilenceNotification(job: JobResponse | null, onPermissionUnav
     const activeJob = job;
     let closed = false;
     const timeoutMs = silenceNotificationTimeoutMsForJob(activeJob);
-    const stream = new EventSource(authenticatedApiUrl(`/api/jobs/${activeJob.id}/live/stream`), { withCredentials: true });
+    const stream = new EventSource(apiUrl(`/api/jobs/${activeJob.id}/live/stream`));
 
     void startSilenceNotificationMonitor({
       jobId: activeJob.id,

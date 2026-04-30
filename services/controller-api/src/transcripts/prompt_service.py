@@ -5,23 +5,17 @@ from typing import Any
 
 from jobs.artifacts import ArtifactManager
 from jobs.models import ArtifactFile, TranscriptSummaryGenerateResponse, TranscriptSummarySource
+from core.prompts import read_prompt
 from core.settings import Settings
 from transcripts.store import TranscriptStore
 from transcripts.summary_cache import TranscriptSummaryCache
 from core.utils import format_offset, isoformat, utcnow
 
-DEFAULT_CANONICAL_SUMMARY_PROMPT = "\n".join(
-    [
-        "Create the canonical recap for this session.",
-        "Return markdown only with these sections:",
-        "1. Short summary paragraph",
-        "2. Key points",
-        "3. Action items",
-        "4. Important names / dates",
-        "5. Open questions",
-        "6. Confidence / caveats",
-    ]
-)
+CANONICAL_SUMMARY_PROMPT_FILE = "canonical_summary.txt"
+
+
+def default_canonical_summary_prompt() -> str:
+    return read_prompt(CANONICAL_SUMMARY_PROMPT_FILE)
 
 
 @dataclass
@@ -64,9 +58,12 @@ class TranscriptPromptService:
         self,
         *,
         job_id: str,
-        prompt: str = DEFAULT_CANONICAL_SUMMARY_PROMPT,
+        prompt: str | None = None,
     ) -> str:
-        job, normalized_prompt, transcript_text, source = self._prepare_request(job_id=job_id, prompt=prompt)
+        job, normalized_prompt, transcript_text, source = self._prepare_request(
+            job_id=job_id,
+            prompt=prompt if prompt is not None else default_canonical_summary_prompt(),
+        )
         markdown, provider = await self._request_summary(
             prompt=normalized_prompt,
             transcript_text=transcript_text,

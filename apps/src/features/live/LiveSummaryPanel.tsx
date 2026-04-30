@@ -4,12 +4,11 @@ import type { FormEvent } from "react";
 
 import { Badge, Button, Card, TextArea } from "../../components/ui";
 import { generateTranscriptSummary, saveTranscriptSummary } from "../../lib/api";
+import { getDefaultLiveSummaryPrompt } from "../../lib/prompts";
 import type { JobDetailResponse, TranscriptSummaryGenerateResponse } from "../../lib/types";
 
-export const defaultSummaryPrompt = "Summarize decisions, risks, and next steps.";
-
 export function LiveSummaryPanel({ job, onSaved }: { job: JobDetailResponse | null; onSaved: () => void }) {
-  const [prompt, setPrompt] = useState(defaultSummaryPrompt);
+  const [prompt, setPrompt] = useState(() => getDefaultLiveSummaryPrompt());
   const [result, setResult] = useState<TranscriptSummaryGenerateResponse | null>(null);
   const [message, setMessage] = useState("");
   const [busyAction, setBusyAction] = useState<"" | "generate" | "save">("");
@@ -43,7 +42,7 @@ export function LiveSummaryPanel({ job, onSaved }: { job: JobDetailResponse | nu
   }
 
   function resetSummary() {
-    setPrompt(defaultSummaryPrompt);
+    setPrompt(getDefaultLiveSummaryPrompt());
     setResult(null);
     setMessage("");
   }
@@ -68,7 +67,7 @@ export function LiveSummaryPanel({ job, onSaved }: { job: JobDetailResponse | nu
   const summarySource = result
     ? `${result.source.final_block_count} finalized block${result.source.final_block_count === 1 ? "" : "s"}`
     : "";
-  const canResetSummary = Boolean(result || message || prompt !== defaultSummaryPrompt);
+  const canResetSummary = Boolean(result || message || prompt !== getDefaultLiveSummaryPrompt());
 
   return (
     <Card className="summary-panel">

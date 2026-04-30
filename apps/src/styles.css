@@ -856,17 +856,6 @@ label {
   }
 }
 
-.login-screen {
-  display: grid;
-  min-height: 100vh;
-  place-items: center;
-  padding: 28px;
-}
-
-.login-card {
-  width: min(420px, 100%);
-}
-
 .mono-line {
   overflow-wrap: anywhere;
   border: 1px solid #e2e2e2;

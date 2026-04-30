@@ -31,9 +31,6 @@ def _read_openclaw_gateway_token(config_path: Path) -> str:
 
 class Settings(BaseModel):
     app_name: str = APP_NAME_DEFAULT
-    controller_username: str
-    controller_password: str
-    session_secret: str
     controller_base_url: str = "http://127.0.0.1:8788"
     controller_db_path: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller" / "controller.db"
     artifacts_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "artifacts"
@@ -69,9 +66,6 @@ class Settings(BaseModel):
         env = os.environ
         openclaw_config_path = Path(env.get("OPENCLAW_CONFIG_PATH", str(OPENCLAW_CONFIG_PATH_DEFAULT))).expanduser()
         return cls(
-            controller_username=env.get("CONTROLLER_USERNAME", "admin"),
-            controller_password=env.get("CONTROLLER_PASSWORD", "change-me"),
-            session_secret=env.get("SESSION_SECRET", env.get("CONTROLLER_PASSWORD", "change-me")),
             controller_base_url=env.get("CONTROLLER_BASE_URL", "http://127.0.0.1:8788"),
             controller_db_path=Path(env.get("CONTROLLER_DB_PATH", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller" / "controller.db"))),
             artifacts_root=Path(env.get("ARTIFACTS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "artifacts"))),

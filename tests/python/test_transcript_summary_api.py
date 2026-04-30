@@ -5,17 +5,7 @@ import json
 import time
 
 from jobs.models import JobCreate
-from transcripts.prompt_service import DEFAULT_CANONICAL_SUMMARY_PROMPT
-from conftest import login
-
-
-def login_json(client) -> None:
-    response = client.post(
-        "/api/session/login",
-        json={"username": "operator", "password": "secret-pass"},
-    )
-    assert response.status_code == 200
-    assert response.json()["authenticated"] is True
+from transcripts.prompt_service import default_canonical_summary_prompt
 
 
 def append_transcript(runtime, job_id: str, *, final_text: str = "Committed line", interim_text: str | None = None) -> None:
@@ -56,9 +46,9 @@ def append_transcript(runtime, job_id: str, *, final_text: str = "Committed line
         )
 
 
-def test_transcript_summary_routes_require_login(client) -> None:
+def test_transcript_summary_routes_reach_business_validation_without_login(client) -> None:
     runtime = client.app.state.runtime
-    job = runtime.jobs.create_job(JobCreate(title="Protected Summary"))
+    job = runtime.jobs.create_job(JobCreate(title="Open Summary"))
 
     generate = client.post(
         f"/api/jobs/{job.id}/transcript-summary/generate",
@@ -69,14 +59,13 @@ def test_transcript_summary_routes_require_login(client) -> None:
         json={"request_id": "missing"},
     )
 
-    assert generate.status_code == 401
-    assert generate.json() == {"detail": "authentication required"}
-    assert save.status_code == 401
-    assert save.json() == {"detail": "authentication required"}
+    assert generate.status_code == 400
+    assert generate.json() == {"detail": "transcript snapshot is empty"}
+    assert save.status_code == 404
+    assert save.json() == {"detail": "transcript summary request not found"}
 
 
 def test_generate_transcript_summary_uses_live_snapshot_for_active_jobs(client, monkeypatch) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Active Transcript Summary"))
     runtime.jobs.update_runtime_fields(job.id, state="live_streaming")
@@ -120,7 +109,6 @@ def test_generate_transcript_summary_uses_live_snapshot_for_active_jobs(client, 
 
 
 def test_generate_transcript_summary_rebuilds_completed_job_snapshot_from_events(client, monkeypatch) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Completed Transcript Summary"))
     runtime.jobs.update_runtime_fields(job.id, state="completed")
@@ -156,7 +144,6 @@ def test_generate_transcript_summary_rebuilds_completed_job_snapshot_from_events
 
 
 def test_generate_transcript_summary_rejects_blank_prompt(client) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Blank Prompt"))
     append_transcript(runtime, job.id)
@@ -171,7 +158,6 @@ def test_generate_transcript_summary_rejects_blank_prompt(client) -> None:
 
 
 def test_generate_transcript_summary_rejects_empty_snapshot(client) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Empty Transcript"))
 
@@ -185,7 +171,6 @@ def test_generate_transcript_summary_rejects_empty_snapshot(client) -> None:
 
 
 def test_generate_transcript_summary_surfaces_openclaw_failures(client, monkeypatch) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="OpenClaw Failure"))
     append_transcript(runtime, job.id)
@@ -212,7 +197,6 @@ def test_generate_transcript_summary_surfaces_openclaw_failures(client, monkeypa
 
 
 def test_save_transcript_summary_persists_cached_result_without_reinvoking_openclaw(client, monkeypatch) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Save Transcript Summary"))
     append_transcript(runtime, job.id)
@@ -274,7 +258,6 @@ def test_save_transcript_summary_persists_cached_result_without_reinvoking_openc
 
 
 def test_saved_transcript_summary_events_do_not_store_prompt_or_inline_content(client, monkeypatch) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Transcript Summary Events"))
     append_transcript(runtime, job.id)
@@ -328,7 +311,6 @@ def test_saved_transcript_summary_events_do_not_store_prompt_or_inline_content(c
 
 
 def test_rerun_summary_route_uses_openclaw_and_rewrites_canonical_summary(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Canonical Summary", summary_model="custom-summary-model"))
     paths = runtime.artifacts.job_paths(job.id)
@@ -368,14 +350,13 @@ def test_rerun_summary_route_uses_openclaw_and_rewrites_canonical_summary(client
         raise AssertionError("summary rerun did not complete")
 
     assert paths.summary.read_text(encoding="utf-8") == "# Summary\n\nCanonical recap\n"
-    assert captured["prompt"] == DEFAULT_CANONICAL_SUMMARY_PROMPT
+    assert captured["prompt"] == default_canonical_summary_prompt()
     assert captured["title"] == "Canonical Summary"
     assert captured["model"] == "custom-summary-model"
     assert "Canonical transcript line" in captured["transcript_text"]
 
 
 def test_rerun_summary_route_falls_back_from_legacy_fake_summary_model(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Legacy Canonical Summary", summary_model="fake-summary"))
     append_transcript(runtime, job.id, final_text="Legacy transcript line")
@@ -413,7 +394,6 @@ def test_rerun_summary_route_falls_back_from_legacy_fake_summary_model(client, m
 
 
 def test_duplicate_summary_rerun_requests_reuse_existing_background_run(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Canonical Summary Reuse"))
     append_transcript(runtime, job.id, final_text="Canonical transcript line")

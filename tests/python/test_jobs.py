@@ -7,7 +7,6 @@ import httpx
 
 from jobs.models import JobCreate
 from jobs.state_machine import JobState
-from conftest import login
 
 
 def wait_for_state(client, job_id: str, target: str, timeout: float = 5.0) -> dict[str, object]:
@@ -34,7 +33,6 @@ def wait_for_metadata_value(client, job_id: str, key: str, target: str, timeout:
 
 
 def test_cleanup_job_removes_artifacts_and_recordings_but_keeps_job(client) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Cleanup Candidate"))
     runtime.jobs.update_runtime_fields(job.id, state=JobState.FAILED.value)
@@ -55,7 +53,6 @@ def test_cleanup_job_removes_artifacts_and_recordings_but_keeps_job(client) -> N
 
 
 def test_delete_job_removes_job_record_transitions_and_files(client) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Delete Candidate"))
     runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
@@ -78,7 +75,6 @@ def test_delete_job_removes_job_record_transitions_and_files(client) -> None:
 
 
 def test_start_job_rejects_second_active_capture(client) -> None:
-    login(client)
 
     first = client.post(
         "/api/jobs/start",
@@ -93,24 +89,17 @@ def test_start_job_rejects_second_active_capture(client) -> None:
     assert second.status_code == 409
 
 
-def test_start_job_omits_legacy_notify_email_from_api_payloads(client) -> None:
-    login(client)
+def test_start_job_rejects_unknown_payload_fields(client) -> None:
 
     start = client.post(
         "/api/jobs/start",
-        json={"title": "Authorized public livestream", "notify_email": "person@example.com"},
+        json={"title": "Authorized public livestream", "legacy_contact": "person"},
     )
 
-    assert start.status_code == 200
-    start_payload = start.json()
-    assert "notify_email" not in start_payload
-
-    detail_payload = client.get(f"/api/jobs/{start_payload['id']}").json()
-    assert "notify_email" not in detail_payload
+    assert start.status_code == 422
 
 
 def test_start_job_failure_marks_job_failed_and_allows_retry(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     original_start_live_audio = runtime.capture.desktop_client.start_live_audio
 
@@ -145,7 +134,6 @@ def test_start_job_failure_marks_job_failed_and_allows_retry(client, monkeypatch
 
 
 def test_live_websocket_rebroadcasts_and_stop_finalizes_artifacts(client) -> None:
-    login(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
     job_id = start.json()["id"]
@@ -178,7 +166,6 @@ def test_live_websocket_rebroadcasts_and_stop_finalizes_artifacts(client) -> Non
 
 
 def test_start_job_can_skip_screen_recording_while_keeping_transcript_and_summary(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     backend = runtime.capture.capture_backends.require("docker_desktop")
 
@@ -218,7 +205,6 @@ def test_start_job_can_skip_screen_recording_while_keeping_transcript_and_summar
 
 
 def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     backend = runtime.capture.capture_backends.require("macos_local")
     calls: list[tuple[str, bool]] = []
@@ -265,7 +251,6 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
 
 
 def test_mute_target_audio_endpoint_updates_active_local_app_capture_after_backend_ack(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(
         JobCreate(
@@ -304,7 +289,6 @@ def test_mute_target_audio_endpoint_updates_active_local_app_capture_after_backe
 
 
 def test_mute_target_audio_endpoint_is_idempotent_when_state_already_matches(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(
         JobCreate(
@@ -338,7 +322,6 @@ def test_mute_target_audio_endpoint_is_idempotent_when_state_already_matches(cli
 
 
 def test_mute_target_audio_endpoint_rejects_inactive_job(client) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(
         JobCreate(
@@ -360,7 +343,6 @@ def test_mute_target_audio_endpoint_rejects_inactive_job(client) -> None:
 
 
 def test_mute_target_audio_endpoint_rejects_unsupported_backend_and_target(client) -> None:
-    login(client)
     runtime = client.app.state.runtime
     docker_job = runtime.jobs.create_job(JobCreate(title="Docker mute"))
     runtime.jobs.transition_job(docker_job.id, JobState.PENDING_START, "test")
@@ -394,7 +376,6 @@ def test_mute_target_audio_endpoint_rejects_unsupported_backend_and_target(clien
 
 
 def test_stop_endpoint_accepts_active_job(client) -> None:
-    login(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
     job_id = start.json()["id"]
@@ -406,7 +387,6 @@ def test_stop_endpoint_accepts_active_job(client) -> None:
 
 
 def test_artifacts_endpoint_only_lists_summary_when_markdown_exists(client) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Markdown Summary"))
     before = client.get(f"/api/jobs/{job.id}/artifacts")
@@ -431,7 +411,6 @@ def test_create_job_defaults_summary_model_to_openclaw_model(client) -> None:
 
 
 def test_summary_rerun_endpoint_dispatches_refresh(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Summary Refresh"))
 
@@ -451,7 +430,6 @@ def test_summary_rerun_endpoint_dispatches_refresh(client, monkeypatch) -> None:
 
 
 def test_summary_rerun_endpoint_tracks_controlled_error(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Summary Refresh Failure"))
 
@@ -468,7 +446,6 @@ def test_summary_rerun_endpoint_tracks_controlled_error(client, monkeypatch) -> 
 
 
 def test_stop_summary_failure_keeps_job_completed_and_tracks_recap_error(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
@@ -498,7 +475,6 @@ def test_stop_summary_failure_keeps_job_completed_and_tracks_recap_error(client,
     assert "transcript.txt" in {item["name"] for item in artifacts["files"]}
 
 def test_recover_route_resumes_recovering_job_and_completes(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Recoverable failure"))
     paths = runtime.artifacts.job_paths(job.id)
@@ -542,7 +518,6 @@ def test_recover_route_resumes_recovering_job_and_completes(client, monkeypatch)
 
 
 def test_stop_uses_transcript_prompts_for_canonical_summary(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
@@ -568,7 +543,6 @@ def test_stop_uses_transcript_prompts_for_canonical_summary(client, monkeypatch)
 
 
 def test_stop_can_skip_canonical_summary_generation(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
@@ -601,7 +575,6 @@ def test_stop_can_skip_canonical_summary_generation(client, monkeypatch) -> None
 
 
 def test_start_job_can_disable_final_summary_generation(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     start = client.post(
         "/api/jobs/start",
@@ -634,7 +607,6 @@ def test_start_job_can_disable_final_summary_generation(client, monkeypatch) -> 
 
 
 def test_duplicate_stop_requests_reuse_existing_background_run(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
@@ -661,7 +633,6 @@ def test_duplicate_stop_requests_reuse_existing_background_run(client, monkeypat
 
 
 def test_stop_keeps_job_active_until_summary_finishes(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200

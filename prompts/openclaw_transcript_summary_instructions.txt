@@ -1,0 +1,1 @@
+Summarize transcript excerpts in concise factual markdown. Do not invent facts.

@@ -50,8 +50,8 @@ The application is built using the following technologies:
 
 - **thirdeye.app**: macOS app and main user interface, built with Tauri.
 - **macos-capture-agent**: FastAPI agent on `127.0.0.1:8791` for local macOS displays, applications, and windows.
-- **controller-api**: FastAPI service on `127.0.0.1:8788` for auth, job lifecycle, Deepgram relay, transcript rebroadcast, summaries, artifacts, and recovery.
-- **desktop**: optional Dockerized Chromium desktop with KasmVNC on `127.0.0.1:3000`, a desktop control API on `127.0.0.1:8790`, and the `ffmpeg` capture scripts.
+- **controller-api**: FastAPI service on `127.0.0.1:8788` for job lifecycle, Deepgram relay, transcript rebroadcast, summaries, artifacts, and recovery.
+- **desktop**: optional Dockerized Chromium desktop with KasmVNC on `127.0.0.1:3000`, a desktop control API on `127.0.0.1:8790`, and the `ffmpeg` capture scripts. The desktop web UI is loopback-only and does not require a thirdeye login.
 - **openclaw**: optional Docker helper on `127.0.0.1:18789` that act as a gateway for LLM calls.
 
 Recording and live transcription are decoupled:
@@ -81,8 +81,6 @@ Install these on the host machine before starting setup:
 You will need the following runtime requirements configured before real captures will work:
 
 - A Deepgram API key in `.env` as `DEEPGRAM_API_KEY`.
-- Controller credentials in `.env` as `CONTROLLER_USERNAME`, `CONTROLLER_PASSWORD`, and `SESSION_SECRET`.
-- Desktop login credentials in `.env` as `DESKTOP_USER` and `DESKTOP_PASSWORD`.
 - If you want OpenClaw-backed summaries, a readable host config file at `~/.openclaw/openclaw.json` containing `gateway.auth.token`.
 
 ## Security
@@ -131,13 +129,10 @@ python -m pytest tests/python -q
 
 At minimum, update these values before real use:
 
-- `CONTROLLER_PASSWORD`
-- `SESSION_SECRET`
 - `DEEPGRAM_API_KEY`
 
 If you use the optional isolated Docker desktop, also update:
 
-- `DESKTOP_PASSWORD`
 - `PUID` and `PGID` to match your host user and group IDs
 
 You can get the host IDs with:
@@ -151,9 +146,6 @@ Important environment variables from `.env.example`:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `CONTROLLER_USERNAME` / `CONTROLLER_PASSWORD` | Yes | Login for the local controller |
-| `SESSION_SECRET` | Yes | Cookie/session signing secret |
-| `DESKTOP_USER` / `DESKTOP_PASSWORD` | Yes | Credentials for the isolated desktop |
 | `PUID` / `PGID` | Recommended | Host UID and GID for Docker volume ownership |
 | `TZ` | Yes | Host and container timezone |
 | `MACOS_CAPTURE_BASE_URL` | Optional | Base URL for the host-local macOS capture agent |
@@ -338,7 +330,6 @@ The smoke test checks:
 - controller API health
 - desktop agent health
 - desktop UI reachability
-- session login
 - controller settings health
 - desktop integration
 - Deepgram integration
@@ -410,7 +401,7 @@ make test-all
 
 ## Start Capture Workflow
 
-1. Open `thirdeye.app` and sign in with `CONTROLLER_USERNAME` and `CONTROLLER_PASSWORD`.
+1. Open `thirdeye.app`.
 2. Click `Start Capture`.
 3. Choose `This Mac` for a local screen, app, or window, or choose `Isolated desktop` if you started the optional Docker desktop.
 4. Start playback yourself if needed.

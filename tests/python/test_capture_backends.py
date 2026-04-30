@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from jobs.models import JobCreate
 from jobs.state_machine import JobState
-from conftest import login
 
 
 def test_create_job_defaults_to_docker_desktop_capture_selection(settings) -> None:
@@ -39,7 +38,6 @@ def test_create_job_defaults_to_docker_desktop_capture_selection(settings) -> No
 
 
 def test_start_job_persists_requested_macos_capture_selection(client) -> None:
-    login(client)
 
     response = client.post(
         "/api/jobs/start",
@@ -86,7 +84,6 @@ def test_start_job_persists_requested_macos_capture_selection(client) -> None:
 
 
 def test_start_job_persists_muted_target_audio_preference(client) -> None:
-    login(client)
 
     response = client.post(
         "/api/jobs/start",
@@ -112,7 +109,6 @@ def test_start_job_persists_muted_target_audio_preference(client) -> None:
 
 
 def test_capture_targets_endpoint_lists_targets_for_requested_backend(client) -> None:
-    login(client)
 
     docker_response = client.get("/api/capture/targets?backend=docker_desktop")
 
@@ -175,7 +171,6 @@ def test_capture_targets_endpoint_lists_targets_for_requested_backend(client) ->
 
 
 def test_capture_targets_endpoint_rejects_unknown_backend(client) -> None:
-    login(client)
 
     response = client.get("/api/capture/targets?backend=unknown-backend")
 
@@ -184,7 +179,6 @@ def test_capture_targets_endpoint_rejects_unknown_backend(client) -> None:
 
 
 def test_capture_targets_reuses_active_local_target_without_refreshing_screen_capture(client, monkeypatch) -> None:
-    login(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(
         JobCreate(

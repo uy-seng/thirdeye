@@ -12,9 +12,12 @@ def test_macos_live_audio_fifo_matches_deepgram_linear16_contract() -> None:
     ).read_text(encoding="utf-8")
     helper = (ROOT / "services" / "macos-capture-agent" / "helper" / "ScreenCaptureKitHelper.swift").read_text(encoding="utf-8")
 
-    assert '"encoding": "linear16"' in deepgram_client
-    assert '"sample_rate": 16000' in deepgram_client
-    assert '"channels": 1' in deepgram_client
+    assert 'encoding: str = "linear16"' in deepgram_client
+    assert "sample_rate: int = 16000" in deepgram_client
+    assert "channels: int = 1" in deepgram_client
+    assert '"encoding": encoding' in deepgram_client
+    assert '"sample_rate": sample_rate' in deepgram_client
+    assert '"channels": channels' in deepgram_client
     assert "AVAudioConverter" in helper
     assert ".pcmFormatInt16" in helper
     assert "CMSampleBufferCopyPCMDataIntoAudioBufferList" in helper

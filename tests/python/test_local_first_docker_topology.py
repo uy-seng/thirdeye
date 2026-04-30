@@ -48,6 +48,16 @@ def test_compose_uses_thirdeye_project_identity() -> None:
     assert 'name: thirdeye_' not in compose
 
 
+def test_compose_does_not_enable_isolated_desktop_basic_auth() -> None:
+    compose = (ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "CUSTOM_USER" not in compose
+    assert "PASSWORD: ${DESKTOP_PASSWORD}" not in compose
+    assert "DESKTOP_USER" not in env_example
+    assert "DESKTOP_PASSWORD" not in env_example
+
+
 def test_compose_mounts_desktop_recordings_from_configured_runtime_root() -> None:
     compose = (ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8")
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")

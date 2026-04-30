@@ -9,8 +9,6 @@ import {
   generateTranscriptSummary,
   generateVoiceNoteSummary,
   getJobs,
-  login,
-  logout,
   saveTranscriptSummary,
   setTargetAudioMuted,
   startCapture,
@@ -18,7 +16,7 @@ import {
 
 test("apiUrl points the native app at the local controller API", () => {
   assert.equal(API_BASE, "http://127.0.0.1:8788");
-  assert.equal(apiUrl("/api/session"), "http://127.0.0.1:8788/api/session");
+  assert.equal(apiUrl("/api/jobs"), "http://127.0.0.1:8788/api/jobs");
 });
 
 test("artifactHref keeps absolute artifact links and expands local paths", () => {
@@ -26,38 +24,24 @@ test("artifactHref keeps absolute artifact links and expands local paths", () =>
   assert.equal(artifactHref("/artifacts/job/summary.md"), "http://127.0.0.1:8788/artifacts/job/summary.md");
 });
 
-test("native login token authenticates packaged app requests without cookies", async () => {
+test("controller requests do not attach local authentication state", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    calls.push({ url, init });
-    if (url.endsWith("/api/session/login")) {
-      return new Response(JSON.stringify({ authenticated: true, username: "operator", api_token: "native-token" }), {
-        headers: { "content-type": "application/json" },
-        status: 200,
-      });
-    }
-    if (url.endsWith("/api/jobs")) {
-      return new Response(JSON.stringify([]), { headers: { "content-type": "application/json" }, status: 200 });
-    }
-    return new Response(JSON.stringify({ authenticated: false, username: null }), {
-      headers: { "content-type": "application/json" },
-      status: 200,
-    });
+    calls.push({ url: String(input), init });
+    return new Response(JSON.stringify([]), { headers: { "content-type": "application/json" }, status: 200 });
   };
 
   try {
-    await login("operator", "secret-pass");
     await getJobs();
 
-    const loginHeaders = calls[0]?.init?.headers as Headers;
-    const jobsHeaders = calls[1]?.init?.headers as Headers;
-    assert.equal(loginHeaders.get("x-thirdeye-client"), "macos");
-    assert.equal(jobsHeaders.get("authorization"), "Bearer native-token");
-    assert.equal(artifactHref("/artifacts/job/summary.md"), "http://127.0.0.1:8788/artifacts/job/summary.md?auth_token=native-token");
+    const headers = calls[0]?.init?.headers as Headers;
+    assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/jobs");
+    assert.equal(headers.has("x-thirdeye-client"), false);
+    assert.equal(headers.has("authorization"), false);
+    assert.equal(calls[0]?.init?.credentials, undefined);
+    assert.equal(artifactHref("/artifacts/job/summary.md"), "http://127.0.0.1:8788/artifacts/job/summary.md");
   } finally {
-    await logout().catch(() => undefined);
     globalThis.fetch = originalFetch;
   }
 });
@@ -85,7 +69,7 @@ test("generateTranscriptSummary posts a live summary prompt for the selected job
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/jobs/job-123/transcript-summary/generate");
     assert.equal(calls[0]?.init?.method, "POST");
-    assert.equal(calls[0]?.init?.credentials, "include");
+    assert.equal(calls[0]?.init?.credentials, undefined);
     assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { prompt: "Summarize decisions" });
   } finally {
     globalThis.fetch = originalFetch;
@@ -115,7 +99,7 @@ test("saveTranscriptSummary persists the generated live summary result", async (
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/jobs/job-123/transcript-summary/save");
     assert.equal(calls[0]?.init?.method, "POST");
-    assert.equal(calls[0]?.init?.credentials, "include");
+    assert.equal(calls[0]?.init?.credentials, undefined);
     assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { request_id: "summary-1" });
   } finally {
     globalThis.fetch = originalFetch;
@@ -147,7 +131,7 @@ test("generateVoiceNoteSummary posts a voice note transcript to OpenClaw", async
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/voice-notes/summary/generate");
     assert.equal(calls[0]?.init?.method, "POST");
-    assert.equal(calls[0]?.init?.credentials, "include");
+    assert.equal(calls[0]?.init?.credentials, undefined);
     assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
       title: "Quick note",
       transcript: "Follow up tomorrow.",
@@ -259,7 +243,7 @@ test("deleteJob removes the selected job through the local controller", async ()
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/jobs/job-123/delete");
     assert.equal(calls[0]?.init?.method, "POST");
-    assert.equal(calls[0]?.init?.credentials, "include");
+    assert.equal(calls[0]?.init?.credentials, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

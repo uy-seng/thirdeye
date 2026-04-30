@@ -13,9 +13,6 @@ from core.settings import OPENCLAW_SUMMARY_MODEL_DEFAULT, Settings
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         app_name="Local Capture Controller",
-        controller_username="operator",
-        controller_password="secret-pass",
-        session_secret="test-session-secret",
         controller_base_url="http://127.0.0.1:8788",
         controller_db_path=tmp_path / "controller.db",
         artifacts_root=tmp_path / "artifacts",
@@ -66,12 +63,3 @@ def client(settings: Settings) -> TestClient:
 
     with TestClient(app) as test_client:
         yield test_client
-
-
-def login(client: TestClient) -> None:
-    response = client.post(
-        "/api/session/login",
-        json={"username": "operator", "password": "secret-pass"},
-        follow_redirects=False,
-    )
-    assert response.status_code == 200

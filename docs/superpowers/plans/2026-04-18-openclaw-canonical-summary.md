@@ -361,7 +361,7 @@ OPENCLAW_SUMMARY_TIMEOUT_SECONDS=60
 In `README.md`, replace the old settings note:
 
 ```md
-- `SUMMARY_PROVIDER=fake` and `FAKE_MODE=true` enable a local smoke path without real Deepgram, SMTP, or a real live session.
+- `SUMMARY_PROVIDER=fake` and `FAKE_MODE=true` enable a local smoke path without real Deepgram or a real live session.
 ```
 
 with:

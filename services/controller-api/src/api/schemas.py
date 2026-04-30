@@ -12,8 +12,6 @@ from jobs.models import (
     JobResponse,
     JobTransitionResponse,
     LiveSnapshot,
-    SessionCredentials,
-    SessionResponse,
 )
 
 __all__ = [
@@ -30,6 +28,4 @@ __all__ = [
     "JobResponse",
     "JobTransitionResponse",
     "LiveSnapshot",
-    "SessionCredentials",
-    "SessionResponse",
 ]

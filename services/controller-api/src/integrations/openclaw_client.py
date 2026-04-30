@@ -6,10 +6,13 @@ from typing import Any
 
 import httpx
 
+from core.prompts import read_prompt, render_prompt_template
 from core.settings import Settings
 
 OPENCLAW_SUMMARY_TIMEOUT_MAX_ATTEMPTS = 3
 OPENCLAW_SUMMARY_TIMEOUT_RETRY_BASE_DELAY_SECONDS = 0.5
+OPENCLAW_TRANSCRIPT_SUMMARY_INSTRUCTIONS_FILE = "openclaw_transcript_summary_instructions.txt"
+OPENCLAW_TRANSCRIPT_SUMMARY_INPUT_FILE = "openclaw_transcript_summary_input.txt"
 
 
 @dataclass
@@ -36,14 +39,17 @@ class OpenClawClient:
         model: str | None = None,
     ) -> dict[str, str]:
         effective_model = self._effective_summary_model(model)
-        prompt_text = (
-            f"Session title: {title}\n\n"
-            f"Operator request:\n{prompt}\n\n"
-            f"Transcript snapshot:\n{transcript_text}"
+        prompt_text = render_prompt_template(
+            OPENCLAW_TRANSCRIPT_SUMMARY_INPUT_FILE,
+            {
+                "title": title,
+                "prompt": prompt,
+                "transcript": transcript_text,
+            },
         )
         payload = {
             "model": "openclaw",
-            "instructions": "Summarize transcript excerpts in concise factual markdown. Do not invent facts.",
+            "instructions": read_prompt(OPENCLAW_TRANSCRIPT_SUMMARY_INSTRUCTIONS_FILE),
             "input": prompt_text,
         }
         async with httpx.AsyncClient(

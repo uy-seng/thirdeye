@@ -12,15 +12,6 @@ from jobs.models import JobCreate
 from jobs.state_machine import JobState
 
 
-def login_json(client) -> None:
-    response = client.post(
-        "/api/session/login",
-        json={"username": "operator", "password": "secret-pass"},
-    )
-    assert response.status_code == 200
-    assert response.json()["authenticated"] is True
-
-
 def wait_for_stream_line(lines, *, timeout: float = 5.0) -> str:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -33,62 +24,20 @@ def wait_for_stream_line(lines, *, timeout: float = 5.0) -> str:
     raise AssertionError("timed out waiting for stream event")
 
 
-def test_session_json_endpoints_report_and_clear_auth_state(client) -> None:
-    initial = client.get("/api/session")
-
-    assert initial.status_code == 200
-    assert initial.json() == {"authenticated": False, "username": None}
-
-    invalid = client.post(
-        "/api/session/login",
-        json={"username": "operator", "password": "wrong"},
-    )
-
-    assert invalid.status_code == 401
-    assert invalid.json() == {"detail": "invalid credentials"}
-
-    login = client.post(
-        "/api/session/login",
-        json={"username": "operator", "password": "secret-pass"},
-    )
-
-    assert login.status_code == 200
-    assert login.json() == {"authenticated": True, "username": "operator"}
-
-    current = client.get("/api/session")
-
-    assert current.status_code == 200
-    assert current.json() == {"authenticated": True, "username": "operator"}
-
-    logout = client.post("/api/session/logout")
-
-    assert logout.status_code == 200
-    assert logout.json() == {"authenticated": False, "username": None}
-
-    after = client.get("/api/session")
-
-    assert after.status_code == 200
-    assert after.json() == {"authenticated": False, "username": None}
+def test_session_json_endpoints_are_removed(client) -> None:
+    assert client.get("/api/session").status_code == 404
+    assert client.post("/api/session/login", json={"username": "operator", "password": "secret-pass"}).status_code == 404
+    assert client.post("/api/session/logout").status_code == 404
 
 
-def test_native_client_token_authenticates_without_session_cookie(client) -> None:
-    login = client.post(
-        "/api/session/login",
-        json={"username": "operator", "password": "secret-pass"},
-        headers={"x-thirdeye-client": "macos"},
-    )
+def test_controller_routes_do_not_require_login_or_tokens(client) -> None:
+    plain = client.get("/api/settings/health")
+    header = client.get("/api/settings/health", headers={"authorization": "Bearer ignored"})
+    query = client.get("/api/settings/health?auth_token=ignored")
 
-    assert login.status_code == 200
-    token = login.json()["api_token"]
-    assert token
-
-    client.cookies.clear()
-
-    header_auth = client.get("/api/settings/health", headers={"authorization": f"Bearer {token}"})
-    query_auth = client.get(f"/api/settings/health?auth_token={token}")
-
-    assert header_auth.status_code == 200
-    assert query_auth.status_code == 200
+    assert plain.status_code == 200
+    assert header.status_code == 200
+    assert query.status_code == 200
 
 
 def test_jobs_api_allows_tauri_dev_origin_for_credentialed_cors(client) -> None:
@@ -106,8 +55,6 @@ def test_jobs_api_allows_tauri_dev_origin_for_credentialed_cors(client) -> None:
 
 
 def test_health_endpoint_aggregates_runtime_checks(client) -> None:
-    login_json(client)
-
     response = client.get("/api/settings/health")
 
     assert response.status_code == 200
@@ -119,24 +66,13 @@ def test_health_endpoint_aggregates_runtime_checks(client) -> None:
 
 
 def test_openclaw_test_endpoint_returns_runtime_probe_details(client) -> None:
-    login_json(client)
-
     response = client.get("/api/settings/test/openclaw")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "provider": "test-double"}
 
 
-def test_smtp_test_endpoint_is_removed(client) -> None:
-    login_json(client)
-
-    response = client.get("/api/settings/test/smtp")
-
-    assert response.status_code == 404
-
-
 def test_artifacts_overview_lists_jobs_with_artifacts(client) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Artifact Overview"))
     paths = runtime.artifacts.job_paths(job.id)
@@ -158,7 +94,6 @@ def test_artifacts_overview_lists_jobs_with_artifacts(client) -> None:
 
 
 def test_recover_endpoint_accepts_recoverable_failed_job(client) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Recover endpoint"))
     paths = runtime.artifacts.job_paths(job.id)
@@ -174,7 +109,6 @@ def test_recover_endpoint_accepts_recoverable_failed_job(client) -> None:
 
 
 def test_recover_endpoint_rejects_failed_job_without_post_stop_artifacts(client) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Recover endpoint missing artifacts"))
     runtime.jobs.update_runtime_fields(job.id, state=JobState.FAILED.value)
@@ -187,7 +121,6 @@ def test_recover_endpoint_rejects_failed_job_without_post_stop_artifacts(client)
 
 
 def test_live_stream_sse_bootstraps_snapshot_and_emits_new_events(client) -> None:
-    login_json(client)
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="SSE Reader"))
 
@@ -273,8 +206,6 @@ def test_live_stream_sse_bootstraps_snapshot_and_emits_new_events(client) -> Non
 
 
 def test_voice_note_websocket_transcribes_streamed_microphone_audio(client) -> None:
-    login_json(client)
-
     with client.websocket_connect("/ws/voice-notes/live") as websocket:
         websocket.send_bytes(b"\x00\x01" * 256)
         interim = websocket.receive_json()
@@ -332,7 +263,6 @@ def test_voice_note_websocket_uses_live_deepgram_path(settings, monkeypatch) -> 
     app = create_app(settings.model_copy(update={"fake_mode": False}))
 
     with TestClient(app) as test_client:
-        login_json(test_client)
         with test_client.websocket_connect("/ws/voice-notes/live") as websocket:
             websocket.send_bytes(b"\x00\x01" * 256)
             websocket.send_json({"type": "Finalize"})
@@ -344,8 +274,6 @@ def test_voice_note_websocket_uses_live_deepgram_path(settings, monkeypatch) -> 
 
 
 def test_voice_note_summary_endpoint_uses_openclaw(client) -> None:
-    login_json(client)
-
     response = client.post(
         "/api/voice-notes/summary/generate",
         json={
@@ -362,8 +290,6 @@ def test_voice_note_summary_endpoint_uses_openclaw(client) -> None:
 
 
 def test_voice_note_summary_endpoint_requires_transcript(client) -> None:
-    login_json(client)
-
     response = client.post(
         "/api/voice-notes/summary/generate",
         json={"title": "Empty note", "transcript": " ", "prompt": "Summarize this voice note."},

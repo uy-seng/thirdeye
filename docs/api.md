@@ -2,11 +2,8 @@
 
 ## Stable Local Controller API
 
-The source-built macOS app talks directly to `controller-api` on `127.0.0.1:8788`. JSON routes require the local session cookie unless noted.
+The source-built macOS app talks directly to `controller-api` on `127.0.0.1:8788`. Routes are intended for loopback-only local use and do not require a thirdeye login.
 
-- `GET /api/session`
-- `POST /api/session/login`
-- `POST /api/session/logout`
 - `POST /api/jobs/start`
 - `POST /api/jobs/{job_id}/stop`
 - `POST /api/jobs/{job_id}/recover`

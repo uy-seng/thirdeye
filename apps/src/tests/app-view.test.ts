@@ -16,6 +16,8 @@ const jobDetailSource = readFileSync(join(testDir, "../features/jobs/JobDetail.t
 const liveControlsSource = readFileSync(join(testDir, "../features/live/LiveCaptureControls.tsx"), "utf8");
 const liveSummarySource = readFileSync(join(testDir, "../features/live/LiveSummaryPanel.tsx"), "utf8");
 const voiceNotesSource = readFileSync(join(testDir, "../features/voice-notes/VoiceNotesPanel.tsx"), "utf8");
+const promptModulePath = join(testDir, "../lib/prompts.ts");
+const promptModuleSource = existsSync(promptModulePath) ? readFileSync(promptModulePath, "utf8") : "";
 const source = [
   appSource,
   navigationSource,
@@ -47,6 +49,14 @@ const tauriSource = [
 const tauriCapabilities = JSON.parse(readFileSync(join(testDir, "../../tauri/capabilities/default.json"), "utf8")) as {
   permissions: string[];
 };
+const liveSummaryPromptFile = join(testDir, "../../../prompts/live_summary_default.txt");
+const voiceNoteSummaryPromptFile = join(testDir, "../../../prompts/voice_note_summary_default.txt");
+const liveSummaryPrompt = existsSync(liveSummaryPromptFile) ? readFileSync(liveSummaryPromptFile, "utf8").trim() : "";
+const voiceNoteSummaryPrompt = existsSync(voiceNoteSummaryPromptFile) ? readFileSync(voiceNoteSummaryPromptFile, "utf8").trim() : "";
+
+function literalPattern(value: string) {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+}
 
 test("shows the live view only when an active capture exists", () => {
   assert.match(navigationSource, /function Navigation\(\{ view, setView, liveAvailable \}/);
@@ -120,10 +130,20 @@ test("job badges surface completed jobs with summary warnings", () => {
 });
 
 test("live summary panel can reset the generated result", () => {
-  assert.match(liveSummarySource, /const defaultSummaryPrompt = "Summarize decisions, risks, and next steps\.";/);
-  assert.match(liveSummarySource, /function resetSummary\(\) \{\s*setPrompt\(defaultSummaryPrompt\);\s*setResult\(null\);\s*setMessage\(""\);\s*\}/);
+  assert.match(promptModuleSource, /live_summary_default\.txt\?raw/);
+  assert.match(liveSummarySource, /getDefaultLiveSummaryPrompt/);
+  assert.doesNotMatch(liveSummarySource, literalPattern(liveSummaryPrompt));
+  assert.match(liveSummarySource, /function resetSummary\(\) \{\s*setPrompt\(getDefaultLiveSummaryPrompt\(\)\);\s*setResult\(null\);\s*setMessage\(""\);\s*\}/);
   assert.match(liveSummarySource, /onClick=\{resetSummary\}/);
   assert.match(liveSummarySource, />\s*Reset\s*</);
+});
+
+test("summary prompts are read from root prompt files", () => {
+  assert.equal(existsSync(liveSummaryPromptFile), true);
+  assert.equal(existsSync(voiceNoteSummaryPromptFile), true);
+  assert.match(promptModuleSource, /voice_note_summary_default\.txt\?raw/);
+  assert.match(voiceNotesSource, /getDefaultVoiceNoteSummaryPrompt/);
+  assert.doesNotMatch(voiceNotesSource, literalPattern(voiceNoteSummaryPrompt));
 });
 
 test("newly created captures are selected and loaded before opening the live view", () => {
@@ -318,7 +338,7 @@ test("active captures start a native silence monitor outside the live view", () 
   assert.doesNotMatch(silenceHookSource, /window\.setInterval/);
   assert.doesNotMatch(silenceHookSource, /window\.setTimeout/);
   assert.match(silenceHookSource, /SILENCE_ALERT_START_FAILED_MESSAGE/);
-  assert.match(silenceHookSource, /new EventSource\(authenticatedApiUrl\(`\/api\/jobs\/\$\{activeJob\.id\}\/live\/stream`\)/);
+  assert.match(silenceHookSource, /new EventSource\(apiUrl\(`\/api\/jobs\/\$\{activeJob\.id\}\/live\/stream`\)/);
   assert.match(silenceHookSource, /isTranscriptActivity\(event\)/);
   assert.match(servicesSource, /startSilenceNotificationMonitor/);
   assert.match(servicesSource, /elapsedMs\?: number/);

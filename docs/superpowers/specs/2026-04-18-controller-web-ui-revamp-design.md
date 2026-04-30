@@ -63,7 +63,7 @@ Primary regions:
 
 - active capture spotlight with direct entry to the current job workspace
 - launch card for starting a new capture
-- health stack for desktop, Deepgram, SMTP, and OpenClaw
+- health stack for desktop, Deepgram, and OpenClaw
 - recent priority jobs list focused on active, failed, and recently completed sessions
 - compact metrics row for in-flight jobs, completed jobs, and artifact volume
 
