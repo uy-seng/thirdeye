@@ -205,6 +205,72 @@ def test_live_stream_sse_bootstraps_snapshot_and_emits_new_events(client) -> Non
     assert fourth_payload["text"] == "Fresh streamed row."
 
 
+def test_live_stream_sse_promotes_terminal_interim_before_metadata(client) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(JobCreate(title="Terminal Interim"))
+
+    async def exercise_stream() -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
+        stream = iter_live_stream_events(runtime, job.id)
+
+        status_payload = await anext(stream)
+        pending_interim = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        await runtime.capture.handle_deepgram_event(
+            job.id,
+            {
+                "type": "Results",
+                "is_final": False,
+                "start": 16.24,
+                "duration": 2.05,
+                "channel": {
+                    "alternatives": [
+                        {
+                            "transcript": "And I hide out in the stall.",
+                            "words": [{"speaker": 0, "start": 16.24, "end": 17.44}],
+                        }
+                    ]
+                },
+            },
+        )
+        interim_payload = await asyncio.wait_for(pending_interim, timeout=1.0)
+
+        pending_promoted = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        await runtime.capture.handle_deepgram_event(
+            job.id,
+            {
+                "type": "Metadata",
+                "request_id": "request-123",
+                "duration": 18.29,
+                "model_info": {"model-id": {"name": "general-nova-3"}},
+            },
+        )
+        promoted_payload = await asyncio.wait_for(pending_promoted, timeout=1.0)
+        metadata_payload = await asyncio.wait_for(anext(stream), timeout=1.0)
+        await stream.aclose()
+        return status_payload, interim_payload, promoted_payload, metadata_payload
+
+    status_payload, interim_payload, promoted_payload, metadata_payload = asyncio.run(exercise_stream())
+    snapshot = runtime.transcript_store.snapshot(job.id)
+
+    assert status_payload == {"type": "status", "state": "idle"}
+    assert interim_payload["type"] == "interim"
+    assert interim_payload["text"] == "And I hide out in the stall."
+    assert promoted_payload == {
+        "type": "final",
+        "text": "And I hide out in the stall.",
+        "speaker": 0,
+        "start": 16.24,
+        "end": 18.29,
+        "speech_final": True,
+        "promoted_from_interim": True,
+        "promotion_reason": "metadata",
+    }
+    assert metadata_payload["type"] == "metadata"
+    assert snapshot["interim"] == ""
+    assert snapshot["final_blocks"] == [promoted_payload]
+
+
 def test_voice_note_websocket_transcribes_streamed_microphone_audio(client) -> None:
     with client.websocket_connect("/ws/voice-notes/live") as websocket:
         websocket.send_bytes(b"\x00\x01" * 256)

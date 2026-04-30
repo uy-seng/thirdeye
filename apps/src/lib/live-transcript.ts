@@ -64,6 +64,10 @@ export function shouldRenderTranscriptLine(event: TranscriptBlock) {
   return event.type === "final" || event.type === "interim";
 }
 
+export function shouldClearLiveDraft(event: TranscriptBlock) {
+  return event.type === "utterance_end" || event.type === "metadata" || event.type === "complete";
+}
+
 export function createInitialReplayState(snapshot: JobDetailResponse["live_snapshot"]): InitialReplayState {
   return {
     pendingDraft: snapshot.interim || null,

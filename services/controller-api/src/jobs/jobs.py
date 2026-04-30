@@ -299,11 +299,14 @@ class CaptureRuntime:
         return message or exc.__class__.__name__
 
     async def handle_deepgram_event(self, job_id: str, raw_event: dict[str, Any]) -> None:
-        normalized = self.transcript_store.append(job_id, raw_event)
+        result = self.transcript_store.append(job_id, raw_event)
+        normalized = result.event
         if normalized["type"] == "metadata" and normalized.get("request_id"):
             self.jobs.update_runtime_fields(job_id, deepgram_request_id=normalized["request_id"])
         if normalized["type"] in {"speech_started", "utterance_end"}:
             self.jobs.update_metadata(job_id, last_speech_event=normalized)
+        if result.promoted is not None:
+            await self.transcript_hub.publish(job_id, result.promoted)
         await self.transcript_hub.publish(job_id, normalized)
 
     async def mark_degraded(self, job_id: str, message: str) -> None:

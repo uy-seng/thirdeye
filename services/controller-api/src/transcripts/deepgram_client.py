@@ -9,6 +9,12 @@ import websockets
 from core.settings import Settings
 
 
+def _float_or_none(value: Any) -> float | None:
+    if isinstance(value, (float, int)):
+        return float(value)
+    return None
+
+
 def normalize_deepgram_message(message: dict[str, Any]) -> dict[str, Any]:
     event_type = message.get("type")
     if event_type == "Results":
@@ -30,16 +36,50 @@ def normalize_deepgram_message(message: dict[str, Any]) -> dict[str, Any]:
         return normalized
     if event_type == "Metadata":
         model_info = message.get("model_info") or {}
-        return {
+        normalized = {
             "type": "metadata",
             "request_id": message.get("request_id"),
             "model": model_info.get("name"),
         }
+        duration = _float_or_none(message.get("duration"))
+        if duration is not None:
+            normalized["duration"] = duration
+        return normalized
     if event_type == "SpeechStarted":
         return {"type": "speech_started", "timestamp": float(message.get("timestamp", 0.0))}
     if event_type == "UtteranceEnd":
         return {"type": "utterance_end", "timestamp": float(message.get("last_word_end", 0.0))}
     return {"type": "warning", "message": "unknown_event", "raw_type": event_type}
+
+
+def should_promote_interim(trigger: dict[str, Any]) -> bool:
+    if trigger.get("type") == "utterance_end":
+        return True
+    return trigger.get("type") == "metadata" and _float_or_none(trigger.get("duration")) is not None
+
+
+def promote_interim_block(interim: dict[str, Any] | None, trigger: dict[str, Any]) -> dict[str, Any] | None:
+    if not interim:
+        return None
+    text = str(interim.get("text") or "").strip()
+    if not text:
+        return None
+
+    promoted = dict(interim)
+    promoted["type"] = "final"
+    promoted["text"] = text
+    promoted["speech_final"] = True
+    promoted["promoted_from_interim"] = True
+    promoted["promotion_reason"] = str(trigger.get("type") or "stream_end")
+
+    terminal_time = _float_or_none(trigger.get("duration"))
+    if terminal_time is None:
+        terminal_time = _float_or_none(trigger.get("timestamp"))
+    start = _float_or_none(promoted.get("start"))
+    if terminal_time is not None and (start is None or terminal_time >= start):
+        promoted["end"] = terminal_time
+
+    return promoted
 
 
 @dataclass

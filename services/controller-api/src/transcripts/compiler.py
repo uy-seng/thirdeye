@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from transcripts.deepgram_client import normalize_deepgram_message
+from transcripts.deepgram_client import normalize_deepgram_message, promote_interim_block, should_promote_interim
 from core.utils import format_offset
 
 
@@ -42,6 +42,7 @@ class TranscriptCompiler:
         raw_lines: list[str] = []
         if events_path.exists():
             raw_lines = events_path.read_text(encoding="utf-8").splitlines()
+        pending_interim: dict[str, Any] | None = None
         for line in raw_lines:
             if not line.strip():
                 continue
@@ -51,6 +52,17 @@ class TranscriptCompiler:
                 metadata["request_id"] = normalized.get("request_id")
             if normalized["type"] == "final" and normalized.get("text"):
                 segments.append(normalized)
+                pending_interim = None
+            elif normalized["type"] == "interim":
+                pending_interim = normalized if str(normalized.get("text") or "").strip() else None
+            elif should_promote_interim(normalized):
+                promoted = promote_interim_block(pending_interim, normalized)
+                if promoted is not None:
+                    segments.append(promoted)
+                    pending_interim = None
+        promoted = promote_interim_block(pending_interim, {"type": "stream_end"})
+        if promoted is not None:
+            segments.append(promoted)
 
         text_lines = [
             f"Job ID: {metadata['job_id']}",
