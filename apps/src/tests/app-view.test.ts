@@ -33,7 +33,15 @@ const devScriptSource = readFileSync(join(testDir, "../../scripts/dev.sh"), "utf
 const tauriCargoSource = readFileSync(join(testDir, "../../tauri/Cargo.toml"), "utf8");
 const tauriBuildSource = readFileSync(join(testDir, "../../tauri/build.rs"), "utf8");
 const macosNotificationPath = join(testDir, "../../tauri/native/macos_notification.m");
-const tauriSource = readFileSync(join(testDir, "../../tauri/src/lib.rs"), "utf8");
+const tauriSource = [
+  "lib.rs",
+  "app_commands.rs",
+  "local_services.rs",
+  "runtime.rs",
+  "silence_notifications.rs",
+]
+  .map((fileName) => readFileSync(join(testDir, "../../tauri/src", fileName), "utf8"))
+  .join("\n");
 const tauriCapabilities = JSON.parse(readFileSync(join(testDir, "../../tauri/capabilities/default.json"), "utf8")) as {
   permissions: string[];
 };
