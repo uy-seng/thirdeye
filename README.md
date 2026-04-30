@@ -34,6 +34,8 @@ This project is created with technologies usage that minimize the cost you have 
 
 I noticed that this app is not working well on Zoom or Teams application or other applications where the Audio is transmitted in a different processes other than the core application. For app like chrome, the audio is transimitted in the same process family, hence it works. It is recommended that you run everything through browser to get the best results of your need.
 
+The reason this is built on Tauri instead of using Swift completely in order to have macOS native UI is because I want to leave this open for other developers who want to use this tool to be able to customize this to fit their operating system by adding additional module.s
+
 ## Technologies
 
 The application is built using the following technologies:
