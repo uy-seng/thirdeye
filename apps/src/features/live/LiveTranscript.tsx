@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Badge, Card } from "../../components/ui";
 import { authenticatedApiUrl } from "../../lib/api";
 import { readableState, stateTone } from "../../lib/job-state";
-import { advanceInitialReplayState, buildTranscriptFeed, createInitialReplayState, shouldRenderTranscriptLine } from "../../lib/live-transcript";
+import { advanceInitialReplayState, buildTranscriptFeed, createInitialReplayState, shouldClearLiveDraft, shouldRenderTranscriptLine } from "../../lib/live-transcript";
 import type { JobDetailResponse, TranscriptBlock } from "../../lib/types";
 import { formatRange, formatTimestamp, isNearBottom } from "./transcriptFormatting";
 
@@ -76,13 +76,24 @@ export function LiveTranscript({ job }: { job: JobDetailResponse | null }) {
         setSpeech("Speech detected");
         setStreamMessage("Listening for the next words.");
       } else if (event.type === "utterance_end") {
+        setInterim("");
+        setInterimSpeaker(null);
+        setInterimStart(undefined);
         setSpeech("Pause detected");
         setStreamMessage("Waiting for the next speaker.");
       } else if (event.type === "metadata") {
+        if (shouldClearLiveDraft(event)) {
+          setInterim("");
+          setInterimSpeaker(null);
+          setInterimStart(undefined);
+        }
         setStreamMessage(event.model ? `Connected to ${event.model}.` : "Connected to speech service.");
       } else if (event.type === "warning") {
         setStreamMessage(event.message ?? "Live transcript warning.");
       } else if (event.type === "complete") {
+        setInterim("");
+        setInterimSpeaker(null);
+        setInterimStart(undefined);
         setState(event.state ?? "completed");
         setSpeech("Capture complete");
         setStreamMessage("Capture completed.");

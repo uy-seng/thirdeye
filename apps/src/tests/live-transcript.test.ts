@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { advanceInitialReplayState, buildTranscriptFeed, createInitialReplayState, shouldRenderTranscriptLine } from "../lib/live-transcript";
+import { advanceInitialReplayState, buildTranscriptFeed, createInitialReplayState, shouldClearLiveDraft, shouldRenderTranscriptLine } from "../lib/live-transcript";
 
 test("keeps status events out of the transcript feed", () => {
   assert.equal(shouldRenderTranscriptLine({ type: "status", state: "live_streaming" }), false);
@@ -9,6 +9,14 @@ test("keeps status events out of the transcript feed", () => {
   assert.equal(shouldRenderTranscriptLine({ type: "complete", state: "completed" }), false);
   assert.equal(shouldRenderTranscriptLine({ type: "final", text: "Hello" }), true);
   assert.equal(shouldRenderTranscriptLine({ type: "interim", text: "Hello" }), true);
+});
+
+test("clears live drafts when the stream pauses or completes", () => {
+  assert.equal(shouldClearLiveDraft({ type: "utterance_end" }), true);
+  assert.equal(shouldClearLiveDraft({ type: "complete", state: "completed" }), true);
+  assert.equal(shouldClearLiveDraft({ type: "metadata", model: "general-nova-3" }), true);
+  assert.equal(shouldClearLiveDraft({ type: "interim", text: "Still changing" }), false);
+  assert.equal(shouldClearLiveDraft({ type: "status", state: "live_streaming" }), false);
 });
 
 test("skips the initial snapshot replay from the live stream", () => {
