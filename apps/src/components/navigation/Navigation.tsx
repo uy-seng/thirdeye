@@ -1,4 +1,4 @@
-import { Activity, Captions, ListChecks, MonitorUp, Settings } from "lucide-react";
+import { Activity, Captions, ListChecks, Mic, MonitorUp, Settings } from "lucide-react";
 
 import thirdeyeLogoUrl from "../../../../assets/logo.png";
 import type { View } from "../../app/view";
@@ -10,6 +10,7 @@ export function Navigation({ view, setView, liveAvailable }: { view: View; setVi
     { view: "capture", label: "Capture", icon: MonitorUp },
     { view: "jobs", label: "Jobs", icon: ListChecks },
     ...liveItems,
+    { view: "voice-notes", label: "Voice notes", icon: Mic },
     { view: "settings", label: "Settings", icon: Settings },
   ];
 

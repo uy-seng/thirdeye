@@ -10,10 +10,12 @@ import type {
   JobResponse,
   SessionResponse,
   TranscriptSummaryGenerateResponse,
+  VoiceNoteSummaryGenerateResponse,
 } from "./types";
 
 export const API_BASE = "http://127.0.0.1:8788";
 const API_ORIGIN = new URL(API_BASE).origin;
+const API_WS_BASE = API_BASE.replace(/^http/, "ws");
 const NATIVE_CLIENT_HEADER = "x-thirdeye-client";
 const NATIVE_CLIENT_VALUE = "macos";
 const API_TOKEN_QUERY_PARAM = "auth_token";
@@ -26,6 +28,14 @@ export function apiUrl(path: string) {
 
 export function authenticatedApiUrl(path: string) {
   const url = new URL(path, API_BASE);
+  if (apiToken) {
+    url.searchParams.set(API_TOKEN_QUERY_PARAM, apiToken);
+  }
+  return url.toString();
+}
+
+export function voiceNoteLiveUrl() {
+  const url = new URL("/ws/voice-notes/live", API_WS_BASE);
   if (apiToken) {
     url.searchParams.set(API_TOKEN_QUERY_PARAM, apiToken);
   }
@@ -116,6 +126,13 @@ export function saveTranscriptSummary(jobId: string, requestId: string) {
   return apiJson<ArtifactFile>(`/api/jobs/${jobId}/transcript-summary/save`, {
     method: "POST",
     body: JSON.stringify({ request_id: requestId }),
+  });
+}
+
+export function generateVoiceNoteSummary(payload: { title: string; transcript: string; prompt: string }) {
+  return apiJson<VoiceNoteSummaryGenerateResponse>("/api/voice-notes/summary/generate", {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

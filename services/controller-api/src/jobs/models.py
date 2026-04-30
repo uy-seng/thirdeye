@@ -166,6 +166,12 @@ class TranscriptSummarySaveRequest(BaseModel):
     request_id: str
 
 
+class VoiceNoteSummaryGenerateRequest(BaseModel):
+    title: str
+    transcript: str
+    prompt: str
+
+
 class JobStopRequest(BaseModel):
     skip_summary: bool = False
 
@@ -184,6 +190,11 @@ class TranscriptSummaryGenerateResponse(BaseModel):
     markdown: str
     provider: str
     source: TranscriptSummarySource
+
+
+class VoiceNoteSummaryGenerateResponse(BaseModel):
+    markdown: str
+    provider: str
 
 
 class ArtifactFile(BaseModel):

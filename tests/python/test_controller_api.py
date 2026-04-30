@@ -4,6 +4,9 @@ import asyncio
 import json
 import time
 
+from fastapi.testclient import TestClient
+
+from api.main import create_app
 from api.main import iter_live_stream_events, sse_payload
 from jobs.models import JobCreate
 from jobs.state_machine import JobState
@@ -267,3 +270,104 @@ def test_live_stream_sse_bootstraps_snapshot_and_emits_new_events(client) -> Non
     assert third_payload == {"type": "interim", "text": "Draft snapshot row"}
     assert fourth_payload["type"] == "final"
     assert fourth_payload["text"] == "Fresh streamed row."
+
+
+def test_voice_note_websocket_transcribes_streamed_microphone_audio(client) -> None:
+    login_json(client)
+
+    with client.websocket_connect("/ws/voice-notes/live") as websocket:
+        websocket.send_bytes(b"\x00\x01" * 256)
+        interim = websocket.receive_json()
+        websocket.send_json({"type": "Finalize"})
+        final = websocket.receive_json()
+        complete = websocket.receive_json()
+
+    assert interim["type"] == "interim"
+    assert interim["text"]
+    assert final["type"] == "final"
+    assert final["text"]
+    assert complete == {"type": "complete"}
+
+
+def test_voice_note_websocket_uses_live_deepgram_path(settings, monkeypatch) -> None:
+    class FakeDeepgramSocket:
+        def __init__(self) -> None:
+            self.messages: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def send(self, message) -> None:
+            if not isinstance(message, str):
+                return
+            payload = json.loads(message)
+            if payload.get("type") == "Finalize":
+                await self.messages.put(
+                    json.dumps(
+                        {
+                            "type": "Results",
+                            "is_final": True,
+                            "start": 0.0,
+                            "duration": 1.0,
+                            "channel": {"alternatives": [{"transcript": "live voice note", "words": []}]},
+                        }
+                    )
+                )
+            if payload.get("type") == "CloseStream":
+                await self.messages.put(None)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            message = await self.messages.get()
+            if message is None:
+                raise StopAsyncIteration
+            return message
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_connect(self, **kwargs):
+        return FakeDeepgramSocket()
+
+    monkeypatch.setattr("api.main.DeepgramClient.connect", fake_connect)
+    app = create_app(settings.model_copy(update={"fake_mode": False}))
+
+    with TestClient(app) as test_client:
+        login_json(test_client)
+        with test_client.websocket_connect("/ws/voice-notes/live") as websocket:
+            websocket.send_bytes(b"\x00\x01" * 256)
+            websocket.send_json({"type": "Finalize"})
+            final = websocket.receive_json()
+            complete = websocket.receive_json()
+
+    assert final == {"type": "final", "text": "live voice note", "speaker": None, "start": 0.0, "end": 1.0}
+    assert complete == {"type": "complete"}
+
+
+def test_voice_note_summary_endpoint_uses_openclaw(client) -> None:
+    login_json(client)
+
+    response = client.post(
+        "/api/voice-notes/summary/generate",
+        json={
+            "title": "Customer call",
+            "transcript": "The customer asked for pricing follow-up tomorrow.",
+            "prompt": "Summarize this voice note.",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["markdown"] == "# Summary\n\n- Captured transcript details"
+    assert payload["provider"] == "openclaw/openai-codex/gpt-5.4"
+
+
+def test_voice_note_summary_endpoint_requires_transcript(client) -> None:
+    login_json(client)
+
+    response = client.post(
+        "/api/voice-notes/summary/generate",
+        json={"title": "Empty note", "transcript": " ", "prompt": "Summarize this voice note."},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "transcript is required"}

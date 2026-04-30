@@ -33,6 +33,38 @@ def test_websocket_url_includes_vad_events_when_enabled(tmp_path) -> None:
     assert query["vad_events"] == ["true"]
 
 
+def test_websocket_url_can_accept_browser_voice_note_pcm(tmp_path) -> None:
+    settings = Settings(
+        controller_username="operator",
+        controller_password="secret-pass",
+        session_secret="session-secret",
+        controller_db_path=tmp_path / "controller.db",
+        artifacts_root=tmp_path / "artifacts",
+        recordings_root=tmp_path / "recordings",
+        controller_events_root=tmp_path / "events",
+    )
+
+    from transcripts.deepgram_client import DeepgramClient
+
+    url = DeepgramClient(settings).websocket_url(
+        model="nova-3",
+        language=None,
+        diarize=False,
+        smart_format=True,
+        interim_results=True,
+        vad_events=True,
+        encoding="linear16",
+        sample_rate=16000,
+        channels=1,
+    )
+
+    query = parse_qs(urlparse(url).query)
+    assert query["encoding"] == ["linear16"]
+    assert query["sample_rate"] == ["16000"]
+    assert query["channels"] == ["1"]
+    assert "language" not in query
+
+
 def test_results_event_becomes_interim_message() -> None:
     raw = {
         "type": "Results",

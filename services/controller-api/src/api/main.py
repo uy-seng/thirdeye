@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
@@ -30,9 +32,12 @@ from jobs.models import (
     SessionResponse,
     TranscriptSummaryGenerateRequest,
     TranscriptSummarySaveRequest,
+    VoiceNoteSummaryGenerateRequest,
+    VoiceNoteSummaryGenerateResponse,
 )
 from api.runtime import AppRuntime, create_runtime
 from core.settings import Settings
+from transcripts.deepgram_client import DeepgramClient, normalize_deepgram_message
 from transcripts.summary_cache import TranscriptSummaryRequestNotFoundError
 
 
@@ -55,6 +60,86 @@ async def iter_live_stream_events(runtime: AppRuntime, job_id: str) -> AsyncIter
             yield event
     finally:
         runtime.transcript_hub.unsubscribe(job_id, queue)
+
+
+async def handle_fake_voice_note_stream(websocket: WebSocket) -> None:
+    sent_interim = False
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return
+        if message.get("bytes") and not sent_interim:
+            sent_interim = True
+            await websocket.send_json({"type": "interim", "text": "voice note draft"})
+            continue
+        if message.get("text"):
+            with contextlib.suppress(json.JSONDecodeError):
+                payload = json.loads(message["text"])
+                if payload.get("type") == "Finalize":
+                    await websocket.send_json({"type": "final", "text": "voice note captured"})
+                    await websocket.send_json({"type": "complete"})
+                    return
+
+
+async def handle_voice_note_stream(runtime: AppRuntime, websocket: WebSocket) -> None:
+    await websocket.accept()
+    if runtime.settings.fake_mode:
+        await handle_fake_voice_note_stream(websocket)
+        return
+
+    deepgram = DeepgramClient(runtime.settings)
+    try:
+        deepgram_socket = await deepgram.connect(
+            model=runtime.settings.deepgram_model,
+            language=runtime.settings.deepgram_language,
+            diarize=False,
+            smart_format=runtime.settings.deepgram_smart_format,
+            interim_results=True,
+            vad_events=runtime.settings.deepgram_vad_events,
+            encoding="linear16",
+            sample_rate=16000,
+            channels=1,
+        )
+    except Exception as exc:  # pragma: no cover - network
+        await websocket.send_json({"type": "warning", "message": str(exc) or "Unable to start live note."})
+        await websocket.send_json({"type": "complete"})
+        return
+
+    async def send_microphone_audio() -> None:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                break
+            if message.get("bytes"):
+                await deepgram_socket.send(message["bytes"])
+                continue
+            if message.get("text"):
+                with contextlib.suppress(json.JSONDecodeError):
+                    payload = json.loads(message["text"])
+                    if payload.get("type") == "Finalize":
+                        await deepgram_socket.send(json.dumps({"type": "Finalize"}))
+                        await deepgram_socket.send(json.dumps({"type": "CloseStream"}))
+                        break
+
+    async def receive_transcript_events() -> None:
+        async for message in deepgram_socket:
+            if isinstance(message, bytes):
+                continue
+            await websocket.send_json(normalize_deepgram_message(json.loads(message)))
+        await websocket.send_json({"type": "complete"})
+
+    sender = asyncio.create_task(send_microphone_audio())
+    receiver = asyncio.create_task(receive_transcript_events())
+    with contextlib.suppress(Exception):
+        await sender
+    with contextlib.suppress(Exception, asyncio.TimeoutError):
+        await asyncio.wait_for(receiver, timeout=5.0)
+    if not receiver.done():
+        receiver.cancel()
+        with contextlib.suppress(Exception):
+            await websocket.send_json({"type": "complete"})
+    with contextlib.suppress(Exception):
+        await deepgram_socket.close()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -255,6 +340,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return JSONResponse(artifact.model_dump())
 
+    @app.post("/api/voice-notes/summary/generate")
+    async def generate_voice_note_summary(
+        payload: VoiceNoteSummaryGenerateRequest,
+        _: str = Depends(current_api_user),
+    ) -> JSONResponse:
+        transcript = payload.transcript.strip()
+        prompt = payload.prompt.strip()
+        if not transcript:
+            raise HTTPException(status_code=400, detail="transcript is required")
+        if not prompt:
+            raise HTTPException(status_code=400, detail="prompt is required")
+        try:
+            result = await runtime.openclaw.generate_transcript_summary(
+                prompt=prompt,
+                transcript_text=transcript,
+                title=payload.title.strip() or "Voice note",
+            )
+        except RuntimeError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=502)
+        response = VoiceNoteSummaryGenerateResponse(
+            markdown=str(result.get("markdown", "")).strip(),
+            provider=str(result.get("provider", "openclaw")),
+        )
+        if not response.markdown:
+            return JSONResponse({"detail": "OpenClaw LLM returned no text"}, status_code=502)
+        return JSONResponse(response.model_dump())
+
     @app.post("/api/jobs/{job_id}/cleanup")
     async def cleanup_job(job_id: str, _: str = Depends(current_api_user)) -> JSONResponse:
         try:
@@ -321,6 +433,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await websocket.send_json(event)
         except WebSocketDisconnect:
             runtime.transcript_hub.unsubscribe(job_id, queue)
+
+    @app.websocket("/ws/voice-notes/live")
+    async def voice_note_live_socket(websocket: WebSocket) -> None:
+        try:
+            await handle_voice_note_stream(runtime, websocket)
+        except WebSocketDisconnect:
+            return
 
     @app.get("/api/health")
     async def api_health() -> JSONResponse:

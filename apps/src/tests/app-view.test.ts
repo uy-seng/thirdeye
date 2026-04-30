@@ -15,6 +15,7 @@ const permissionNoticeSource = readFileSync(join(testDir, "../features/capture/S
 const jobDetailSource = readFileSync(join(testDir, "../features/jobs/JobDetail.tsx"), "utf8");
 const liveControlsSource = readFileSync(join(testDir, "../features/live/LiveCaptureControls.tsx"), "utf8");
 const liveSummarySource = readFileSync(join(testDir, "../features/live/LiveSummaryPanel.tsx"), "utf8");
+const voiceNotesSource = readFileSync(join(testDir, "../features/voice-notes/VoiceNotesPanel.tsx"), "utf8");
 const source = [
   appSource,
   navigationSource,
@@ -25,6 +26,7 @@ const source = [
   jobDetailSource,
   liveControlsSource,
   liveSummarySource,
+  voiceNotesSource,
 ].join("\n");
 const servicesSource = readFileSync(join(testDir, "../lib/services.ts"), "utf8");
 const notificationSource = readFileSync(join(testDir, "../lib/silence-notifications.ts"), "utf8");
@@ -234,6 +236,37 @@ test("live view exposes a runtime app mute toggle for active captures", () => {
   assert.match(liveControlsSource, /Unmute app/);
   assert.match(liveControlsSource, /canToggleTargetAudioMute/);
   assert.match(liveControlsSource, /targetAudioMuted/);
+});
+
+test("voice notes are available as a separate recording workspace", () => {
+  assert.match(navigationSource, /label: "Voice notes"/);
+  assert.match(navigationSource, /view: "voice-notes"/);
+  assert.match(appSource, /visibleView === "voice-notes"/);
+  assert.match(appSource, /<VoiceNotesPanel \/>/);
+  assert.match(voiceNotesSource, /navigator\.mediaDevices\.getUserMedia\(\{ audio: true \}\)/);
+  assert.match(voiceNotesSource, /new MediaRecorder\(stream\)/);
+  assert.match(voiceNotesSource, /new WebSocket\(voiceNoteLiveUrl\(\)\)/);
+  assert.match(voiceNotesSource, /encodeLinear16/);
+  assert.match(voiceNotesSource, /createVoiceNote/);
+  assert.match(voiceNotesSource, /generateVoiceNoteSummary/);
+  assert.match(voiceNotesSource, /const next = \[note, \.\.\.current\];/);
+  assert.match(voiceNotesSource, /Listening now/);
+  assert.match(voiceNotesSource, /Saved to notes/);
+  assert.match(voiceNotesSource, /Voice summary/);
+  assert.match(voiceNotesSource, /summarizeVoiceNote/);
+  assert.doesNotMatch(voiceNotesSource, /SpeechRecognition|webkitSpeechRecognition/);
+});
+
+test("saved voice notes collapse to cards after their one-time save", () => {
+  assert.match(voiceNotesSource, /const \[expandedNoteId, setExpandedNoteId\] = useState<string \| null>\(null\);/);
+  assert.match(voiceNotesSource, /const \[unsavedNoteIds, setUnsavedNoteIds\] = useState<Set<string>>/);
+  assert.match(voiceNotesSource, /function saveNote\(noteId: string\)/);
+  assert.match(voiceNotesSource, /setExpandedNoteId\(\(current\) => \(current === noteId \? null : current\)\)/);
+  assert.match(voiceNotesSource, /setExpandedNoteId\(null\);/);
+  assert.match(voiceNotesSource, /unsavedNoteIds\.has\(note\.id\)/);
+  assert.match(voiceNotesSource, /voice-note-card/);
+  assert.match(voiceNotesSource, /voice-note-details/);
+  assert.match(voiceNotesSource, /Save/);
 });
 
 test("active captures start a native silence monitor outside the live view", () => {

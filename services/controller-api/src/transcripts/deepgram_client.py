@@ -55,6 +55,9 @@ class DeepgramClient:
         smart_format: bool,
         interim_results: bool,
         vad_events: bool,
+        encoding: str = "linear16",
+        sample_rate: int = 16000,
+        channels: int = 1,
     ) -> str:
         query = urlencode(
             {
@@ -65,9 +68,9 @@ class DeepgramClient:
                 "utterance_end_ms": self.settings.deepgram_utterance_end_ms,
                 "smart_format": str(smart_format).lower(),
                 "diarize": str(diarize).lower(),
-                "encoding": "linear16",
-                "sample_rate": 16000,
-                "channels": 1,
+                "encoding": encoding,
+                "sample_rate": sample_rate,
+                "channels": channels,
                 **({"language": language} if language else {}),
             }
         )
@@ -82,6 +85,9 @@ class DeepgramClient:
         smart_format: bool,
         interim_results: bool,
         vad_events: bool,
+        encoding: str = "linear16",
+        sample_rate: int = 16000,
+        channels: int = 1,
     ):
         return await websockets.connect(
             self.websocket_url(
@@ -91,6 +97,9 @@ class DeepgramClient:
                 smart_format=smart_format,
                 interim_results=interim_results,
                 vad_events=vad_events,
+                encoding=encoding,
+                sample_rate=sample_rate,
+                channels=channels,
             ),
             additional_headers={"Authorization": f"Token {self.settings.deepgram_api_key}"},
         )

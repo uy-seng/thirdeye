@@ -7,6 +7,7 @@ import {
   artifactHref,
   deleteJob,
   generateTranscriptSummary,
+  generateVoiceNoteSummary,
   getJobs,
   login,
   logout,
@@ -116,6 +117,42 @@ test("saveTranscriptSummary persists the generated live summary result", async (
     assert.equal(calls[0]?.init?.method, "POST");
     assert.equal(calls[0]?.init?.credentials, "include");
     assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { request_id: "summary-1" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("generateVoiceNoteSummary posts a voice note transcript to OpenClaw", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return new Response(
+      JSON.stringify({
+        markdown: "# Voice Summary",
+        provider: "openclaw/test",
+      }),
+      { headers: { "content-type": "application/json" }, status: 200 },
+    );
+  };
+
+  try {
+    const result = await generateVoiceNoteSummary({
+      title: "Quick note",
+      transcript: "Follow up tomorrow.",
+      prompt: "Summarize this voice note.",
+    });
+
+    assert.equal(result.markdown, "# Voice Summary");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/voice-notes/summary/generate");
+    assert.equal(calls[0]?.init?.method, "POST");
+    assert.equal(calls[0]?.init?.credentials, "include");
+    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+      title: "Quick note",
+      transcript: "Follow up tomorrow.",
+      prompt: "Summarize this voice note.",
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }

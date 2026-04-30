@@ -27,6 +27,7 @@ import { HealthPanel } from "../features/health/HealthPanel";
 import { JobDetail, JobsTable } from "../features/jobs";
 import { LiveCaptureControls, LiveSummaryPanel, LiveTranscript } from "../features/live";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
+import { VoiceNotesPanel } from "../features/voice-notes/VoiceNotesPanel";
 import type { View } from "./view";
 
 const deleteSuccessNotice = "Job deleted.";
@@ -41,6 +42,18 @@ type SilenceAppAlertPayload = {
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function viewTitle(view: View) {
+  const titles: Record<View, string> = {
+    dashboard: "Operations overview",
+    capture: "Capture",
+    jobs: "Jobs",
+    live: "Live",
+    "voice-notes": "Voice notes",
+    settings: "Settings",
+  };
+  return titles[view];
 }
 
 export function App() {
@@ -307,7 +320,7 @@ export function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">Local first</p>
-            <h2>{visibleView === "dashboard" ? "Operations overview" : visibleView[0].toUpperCase() + visibleView.slice(1)}</h2>
+            <h2>{viewTitle(visibleView)}</h2>
           </div>
           <div className="toolbar">
             <Button onClick={() => void refreshControllerData()} variant="quiet">
@@ -379,6 +392,8 @@ export function App() {
             </div>
           </>
         ) : null}
+
+        {visibleView === "voice-notes" ? <VoiceNotesPanel /> : null}
 
         {visibleView === "settings" ? (
           <SettingsPanel

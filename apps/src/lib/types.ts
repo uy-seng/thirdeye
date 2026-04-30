@@ -76,6 +76,11 @@ export type TranscriptSummaryGenerateResponse = {
   source: TranscriptSummarySource;
 };
 
+export type VoiceNoteSummaryGenerateResponse = {
+  markdown: string;
+  provider: string;
+};
+
 export type LiveSnapshot = {
   final_blocks: TranscriptBlock[];
   interim: string;
