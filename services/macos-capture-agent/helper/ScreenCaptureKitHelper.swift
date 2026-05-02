@@ -100,6 +100,8 @@ enum HelperError: LocalizedError {
     case permissionDenied
     case systemAudioPermissionDenied(String)
     case mutedCaptureUnsupported
+    case microphoneCaptureUnsupported
+    case microphonePermissionDenied
     case missingApplicationProcess
     case invalidAudioBuffer
     case writerFailed(String)
@@ -123,6 +125,10 @@ enum HelperError: LocalizedError {
             return "system_audio_recording_permission_denied: \(detail)"
         case .mutedCaptureUnsupported:
             return "muted app audio capture requires macOS 14.2 or newer"
+        case .microphoneCaptureUnsupported:
+            return "microphone capture requires macOS 15 or newer"
+        case .microphonePermissionDenied:
+            return "microphone_recording_permission_denied"
         case .missingApplicationProcess:
             return "this app's audio cannot be muted yet because no supported audio process was found"
         case .invalidAudioBuffer:
@@ -141,19 +147,27 @@ enum HelperCommand {
         outputFile: URL,
         recordsAudio: Bool,
         liveAudioFifoPath: URL?,
+        microphoneFifoPath: URL?,
         stopFile: URL?,
         muteCommandFile: URL?,
         muteStateFile: URL?,
+        microphoneCommandFile: URL?,
+        microphoneStateFile: URL?,
         target: CaptureTarget,
-        muteTargetAudio: Bool
+        muteTargetAudio: Bool,
+        recordMicrophone: Bool
     )
     case liveAudio(
         fifoPath: URL,
+        microphoneFifoPath: URL?,
         stopFile: URL?,
         muteCommandFile: URL?,
         muteStateFile: URL?,
+        microphoneCommandFile: URL?,
+        microphoneStateFile: URL?,
         target: CaptureTarget,
-        muteTargetAudio: Bool
+        muteTargetAudio: Bool,
+        recordMicrophone: Bool
     )
 
     static func parse(arguments: [String]) throws -> HelperCommand {
@@ -170,20 +184,28 @@ enum HelperCommand {
                 outputFile: URL(fileURLWithPath: try value(named: "--output-file", in: arguments)),
                 recordsAudio: !arguments.contains("--video-only"),
                 liveAudioFifoPath: optionalValue(named: "--fifo-path", in: arguments).map { URL(fileURLWithPath: $0) },
+                microphoneFifoPath: optionalValue(named: "--microphone-fifo-path", in: arguments).map { URL(fileURLWithPath: $0) },
                 stopFile: optionalValue(named: "--stop-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 muteCommandFile: optionalValue(named: "--mute-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 muteStateFile: optionalValue(named: "--mute-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
+                microphoneCommandFile: optionalValue(named: "--microphone-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
+                microphoneStateFile: optionalValue(named: "--microphone-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 target: try parseTarget(arguments: arguments),
-                muteTargetAudio: arguments.contains("--mute-target-audio")
+                muteTargetAudio: arguments.contains("--mute-target-audio"),
+                recordMicrophone: arguments.contains("--record-microphone")
             )
         case "live-audio":
             return .liveAudio(
                 fifoPath: URL(fileURLWithPath: try value(named: "--fifo-path", in: arguments)),
+                microphoneFifoPath: optionalValue(named: "--microphone-fifo-path", in: arguments).map { URL(fileURLWithPath: $0) },
                 stopFile: optionalValue(named: "--stop-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 muteCommandFile: optionalValue(named: "--mute-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 muteStateFile: optionalValue(named: "--mute-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
+                microphoneCommandFile: optionalValue(named: "--microphone-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
+                microphoneStateFile: optionalValue(named: "--microphone-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 target: try parseTarget(arguments: arguments),
-                muteTargetAudio: arguments.contains("--mute-target-audio")
+                muteTargetAudio: arguments.contains("--mute-target-audio"),
+                recordMicrophone: arguments.contains("--record-microphone")
             )
         default:
             throw HelperError.invalidArguments("unknown command: \(command)")
@@ -223,6 +245,18 @@ struct MuteCommandState: Codable {
     let error: String?
 }
 
+struct MicrophoneCommand: Codable {
+    let id: String
+    let record_microphone: Bool
+}
+
+struct MicrophoneCommandState: Codable {
+    let id: String
+    let ok: Bool
+    let record_microphone: Bool
+    let error: String?
+}
+
 struct ResolvedTarget {
     let filter: SCContentFilter
     let width: Int
@@ -231,15 +265,24 @@ struct ResolvedTarget {
 }
 
 enum CaptureMode {
-    case record(outputFile: URL, recordsAudio: Bool, liveAudioFifoPath: URL?, muteTargetAudio: Bool)
-    case liveAudio(fifoPath: URL, muteTargetAudio: Bool)
+    case record(outputFile: URL, recordsAudio: Bool, liveAudioFifoPath: URL?, microphoneFifoPath: URL?, muteTargetAudio: Bool, recordMicrophone: Bool)
+    case liveAudio(fifoPath: URL, microphoneFifoPath: URL?, muteTargetAudio: Bool, recordMicrophone: Bool)
 
     var muteTargetAudio: Bool {
         switch self {
-        case .record(_, _, _, let muteTargetAudio):
+        case .record(_, _, _, _, let muteTargetAudio, _):
             return muteTargetAudio
-        case .liveAudio(_, let muteTargetAudio):
+        case .liveAudio(_, _, let muteTargetAudio, _):
             return muteTargetAudio
+        }
+    }
+
+    var recordMicrophone: Bool {
+        switch self {
+        case .record(_, _, _, _, _, let recordMicrophone):
+            return recordMicrophone
+        case .liveAudio(_, _, _, let recordMicrophone):
+            return recordMicrophone
         }
     }
 }
@@ -675,10 +718,13 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
     private var streamHeight = 0
     private var targetAppProcessID: pid_t?
     private var targetAudioMuted: Bool
+    private var recordMicrophone: Bool
+    private var microphoneOutputAdded = false
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var liveAudioFileDescriptor: Int32?
+    private var microphoneAudioFileDescriptor: Int32?
     private var liveAudioConverter: AVAudioConverter?
     private var liveAudioSourceFormat: AVAudioFormat?
     private var recordingAudioFormat: AVAudioFormat?
@@ -706,6 +752,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         self.mode = mode
         self.target = target
         self.targetAudioMuted = mode.muteTargetAudio
+        self.recordMicrophone = mode.recordMicrophone
     }
 
     func start() async throws {
@@ -720,22 +767,41 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         streamWidth = resolved.width
         streamHeight = resolved.height
         targetAppProcessID = resolved.appProcessID
-        let configuration = Self.makeConfiguration(mode: mode, width: resolved.width, height: resolved.height, muteTargetAudio: targetAudioMuted)
-        if case .record(let outputFile, let recordsAudio, let liveAudioFifoPath, _) = mode {
+        if targetAudioMuted && recordMicrophone {
+            throw HelperError.invalidArguments("record microphone cannot be combined with muted app audio")
+        }
+        if recordMicrophone,
+           !ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)) {
+            throw HelperError.microphoneCaptureUnsupported
+        }
+        let configuration = Self.makeConfiguration(
+            mode: mode,
+            width: resolved.width,
+            height: resolved.height,
+            muteTargetAudio: targetAudioMuted,
+            recordMicrophone: recordMicrophone
+        )
+        if case .record(let outputFile, let recordsAudio, let liveAudioFifoPath, let microphoneFifoPath, _, _) = mode {
             try prepareWriter(
                 outputFile: outputFile,
                 width: resolved.width,
                 height: resolved.height,
                 audioSampleRate: Self.audioSampleRate(for: mode),
                 audioChannelCount: Self.audioChannelCount(for: mode),
-                recordsAudio: recordsAudio
+                recordsAudio: recordsAudio || recordMicrophone
             )
             if let liveAudioFifoPath {
-                try prepareFIFO(at: liveAudioFifoPath)
+                liveAudioFileDescriptor = try prepareFIFO(at: liveAudioFifoPath)
+            }
+            if let microphoneFifoPath {
+                microphoneAudioFileDescriptor = try prepareFIFO(at: microphoneFifoPath)
             }
         }
-        if case .liveAudio(let fifoPath, _) = mode {
-                try prepareFIFO(at: fifoPath)
+        if case .liveAudio(let fifoPath, let microphoneFifoPath, _, _) = mode {
+            liveAudioFileDescriptor = try prepareFIFO(at: fifoPath)
+            if let microphoneFifoPath {
+                microphoneAudioFileDescriptor = try prepareFIFO(at: microphoneFifoPath)
+            }
         }
 
         if targetAudioMuted {
@@ -749,6 +815,14 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         if Self.hasAudioOutput(for: mode) {
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: outputQueue)
+        }
+        if recordMicrophone {
+            if #available(macOS 15.0, *) {
+                try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: outputQueue)
+                microphoneOutputAdded = true
+            } else {
+                throw HelperError.microphoneCaptureUnsupported
+            }
         }
         try await stream.startCapture()
     }
@@ -786,6 +860,10 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         if let fileDescriptor = liveAudioFileDescriptor {
             close(fileDescriptor)
             liveAudioFileDescriptor = nil
+        }
+        if let fileDescriptor = microphoneAudioFileDescriptor {
+            close(fileDescriptor)
+            microphoneAudioFileDescriptor = nil
         }
 
         if let writer {
@@ -825,6 +903,9 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         guard targetAudioMuted != muteTargetAudio else {
             return
         }
+        if muteTargetAudio && recordMicrophone {
+            throw HelperError.invalidArguments("turn off microphone recording before muting app audio")
+        }
 
         if muteTargetAudio {
             try startProcessTapAudioCapture()
@@ -851,6 +932,31 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
+    func setRecordMicrophone(_ enabled: Bool) async throws {
+        guard recordMicrophone != enabled else {
+            return
+        }
+        if enabled && targetAudioMuted {
+            throw HelperError.invalidArguments("turn off muted app audio before recording microphone")
+        }
+        if enabled,
+           !ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)) {
+            throw HelperError.microphoneCaptureUnsupported
+        }
+
+        let previousRecordMicrophone = recordMicrophone
+        recordMicrophone = enabled
+        do {
+            try await updateStreamAudioConfiguration()
+            try setMicrophoneOutputAdded(enabled)
+        } catch {
+            recordMicrophone = previousRecordMicrophone
+            try? await updateStreamAudioConfiguration()
+            try? setMicrophoneOutputAdded(previousRecordMicrophone)
+            throw error
+        }
+    }
+
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         Task {
             try? await stop(error: Self.normalize(error: error))
@@ -867,6 +973,8 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         case .liveAudio:
             if outputType == .audio {
                 writeLiveAudioSample(sampleBuffer)
+            } else if Self.isMicrophoneOutput(outputType) {
+                writeMicrophoneAudioSample(sampleBuffer)
             }
         }
     }
@@ -876,6 +984,11 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
             return
         }
         if outputType == .screen, !Self.isCompleteScreenSample(sampleBuffer) {
+            return
+        }
+        if Self.isMicrophoneOutput(outputType) {
+            appendRecordingAudioSample(sampleBuffer, failurePrefix: "microphone recording audio append failed")
+            writeMicrophoneAudioSample(sampleBuffer)
             return
         }
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
@@ -940,13 +1053,45 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
             mode: mode,
             width: streamWidth,
             height: streamHeight,
-            muteTargetAudio: targetAudioMuted
+            muteTargetAudio: targetAudioMuted,
+            recordMicrophone: recordMicrophone
         )
         try await stream.updateConfiguration(configuration)
     }
 
+    private func setMicrophoneOutputAdded(_ enabled: Bool) throws {
+        guard let stream else {
+            return
+        }
+        if #available(macOS 15.0, *) {
+            if enabled && !microphoneOutputAdded {
+                try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: outputQueue)
+                microphoneOutputAdded = true
+            }
+            if !enabled && microphoneOutputAdded {
+                try stream.removeStreamOutput(self, type: .microphone)
+                microphoneOutputAdded = false
+            }
+            return
+        }
+        if enabled {
+            throw HelperError.microphoneCaptureUnsupported
+        }
+    }
+
     private func writeLiveAudioSample(_ sampleBuffer: CMSampleBuffer) {
         guard let fileDescriptor = liveAudioFileDescriptor,
+              let data = liveAudioLinear16Data(from: sampleBuffer),
+              !data.isEmpty else {
+            return
+        }
+        audioWriteQueue.async {
+            Self.writeAll(data, to: fileDescriptor)
+        }
+    }
+
+    private func writeMicrophoneAudioSample(_ sampleBuffer: CMSampleBuffer) {
+        guard let fileDescriptor = microphoneAudioFileDescriptor,
               let data = liveAudioLinear16Data(from: sampleBuffer),
               !data.isEmpty else {
             return
@@ -1008,14 +1153,14 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         )
     }
 
-    private func appendRecordingAudioSample(_ sampleBuffer: CMSampleBuffer) {
+    private func appendRecordingAudioSample(_ sampleBuffer: CMSampleBuffer, failurePrefix: String = "recording audio append failed") {
         guard let sourceBuffer = recordingAudioBuffer(from: sampleBuffer) else {
             return
         }
         appendRecordingAudioBuffer(
             sourceBuffer,
             presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
-            failurePrefix: "recording audio append failed"
+            failurePrefix: failurePrefix
         )
     }
 
@@ -1267,7 +1412,11 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
               audioBuffer.mDataByteSize > 0 else {
             return nil
         }
-        return Data(bytes: audioData, count: Int(audioBuffer.mDataByteSize))
+        let liveAudioByteCount = Int(outputBuffer.frameLength) * Int(outputBuffer.format.streamDescription.pointee.mBytesPerFrame)
+        guard liveAudioByteCount > 0 else {
+            return nil
+        }
+        return Data(bytes: audioData, count: liveAudioByteCount)
     }
 
     private func liveAudioConverter(for sourceFormat: AVAudioFormat) -> AVAudioConverter? {
@@ -1354,7 +1503,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         self.audioInput = audioInput
     }
 
-    private func prepareFIFO(at fifoPath: URL) throws {
+    private func prepareFIFO(at fifoPath: URL) throws -> Int32 {
         let directory = fifoPath.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         unlink(fifoPath.path)
@@ -1365,10 +1514,16 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         if fileDescriptor < 0 {
             throw HelperError.writerFailed("failed to open live audio fifo at \(fifoPath.path)")
         }
-        liveAudioFileDescriptor = fileDescriptor
+        return fileDescriptor
     }
 
-    private static func makeConfiguration(mode: CaptureMode, width: Int, height: Int, muteTargetAudio: Bool) -> SCStreamConfiguration {
+    private static func makeConfiguration(
+        mode: CaptureMode,
+        width: Int,
+        height: Int,
+        muteTargetAudio: Bool,
+        recordMicrophone: Bool
+    ) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
         configuration.width = width
         configuration.height = height
@@ -1377,6 +1532,9 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         configuration.capturesAudio = capturesAudio(for: mode, muteTargetAudio: muteTargetAudio)
         configuration.sampleRate = audioSampleRate(for: mode)
         configuration.channelCount = audioChannelCount(for: mode)
+        if #available(macOS 15.0, *) {
+            configuration.captureMicrophone = recordMicrophone
+        }
         return configuration
     }
 
@@ -1386,11 +1544,18 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private static func hasAudioOutput(for mode: CaptureMode) -> Bool {
         switch mode {
-        case .record(_, let recordsAudio, let liveAudioFifoPath, _):
+        case .record(_, let recordsAudio, let liveAudioFifoPath, _, _, _):
             return recordsAudio || liveAudioFifoPath != nil
         case .liveAudio:
             return true
         }
+    }
+
+    private static func isMicrophoneOutput(_ outputType: SCStreamOutputType) -> Bool {
+        if #available(macOS 15.0, *) {
+            return outputType == .microphone
+        }
+        return false
     }
 
     private static func audioSampleRate(for mode: CaptureMode) -> Int {
@@ -1504,6 +1669,9 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private static func normalize(error: Error) -> Error {
         let description = error.localizedDescription.lowercased()
+        if description.contains("microphone") && (description.contains("not authorized") || description.contains("permission")) {
+            return HelperError.microphonePermissionDenied
+        }
         if description.contains("not authorized") || description.contains("permission") {
             return HelperError.permissionDenied
         }
@@ -1594,19 +1762,56 @@ func runStream(command: HelperCommand) async throws {
     let stopFile: URL?
     let muteCommandFile: URL?
     let muteStateFile: URL?
+    let microphoneCommandFile: URL?
+    let microphoneStateFile: URL?
     switch command {
-    case .record(let outputFile, let recordsAudio, let liveAudioFifoPath, let commandStopFile, let commandMuteFile, let commandMuteStateFile, let captureTarget, let muteTargetAudio):
+    case .record(
+        let outputFile,
+        let recordsAudio,
+        let liveAudioFifoPath,
+        let microphoneFifoPath,
+        let commandStopFile,
+        let commandMuteFile,
+        let commandMuteStateFile,
+        let commandMicrophoneFile,
+        let commandMicrophoneStateFile,
+        let captureTarget,
+        let muteTargetAudio,
+        let recordMicrophone
+    ):
         target = captureTarget
-        mode = .record(outputFile: outputFile, recordsAudio: recordsAudio, liveAudioFifoPath: liveAudioFifoPath, muteTargetAudio: muteTargetAudio)
+        mode = .record(
+            outputFile: outputFile,
+            recordsAudio: recordsAudio,
+            liveAudioFifoPath: liveAudioFifoPath,
+            microphoneFifoPath: microphoneFifoPath,
+            muteTargetAudio: muteTargetAudio,
+            recordMicrophone: recordMicrophone
+        )
         stopFile = commandStopFile
         muteCommandFile = commandMuteFile
         muteStateFile = commandMuteStateFile
-    case .liveAudio(let fifoPath, let commandStopFile, let commandMuteFile, let commandMuteStateFile, let captureTarget, let muteTargetAudio):
+        microphoneCommandFile = commandMicrophoneFile
+        microphoneStateFile = commandMicrophoneStateFile
+    case .liveAudio(
+        let fifoPath,
+        let microphoneFifoPath,
+        let commandStopFile,
+        let commandMuteFile,
+        let commandMuteStateFile,
+        let commandMicrophoneFile,
+        let commandMicrophoneStateFile,
+        let captureTarget,
+        let muteTargetAudio,
+        let recordMicrophone
+    ):
         target = captureTarget
-        mode = .liveAudio(fifoPath: fifoPath, muteTargetAudio: muteTargetAudio)
+        mode = .liveAudio(fifoPath: fifoPath, microphoneFifoPath: microphoneFifoPath, muteTargetAudio: muteTargetAudio, recordMicrophone: recordMicrophone)
         stopFile = commandStopFile
         muteCommandFile = commandMuteFile
         muteStateFile = commandMuteStateFile
+        microphoneCommandFile = commandMicrophoneFile
+        microphoneStateFile = commandMicrophoneStateFile
     case .targets:
         return
     }
@@ -1633,6 +1838,11 @@ func runStream(command: HelperCommand) async throws {
         stateFile: muteStateFile,
         controller: controller
     )
+    let microphoneCommandFileWatcher = makeMicrophoneCommandFileWatcher(
+        commandFile: microphoneCommandFile,
+        stateFile: microphoneStateFile,
+        controller: controller
+    )
 
     try await controller.start()
     try await controller.waitUntilStopped()
@@ -1640,6 +1850,7 @@ func runStream(command: HelperCommand) async throws {
     _ = signalWatcher
     _ = stopFileWatcher
     _ = muteCommandFileWatcher
+    _ = microphoneCommandFileWatcher
 }
 
 func makeStopFileWatcher(stopFile: URL?, controller: StreamController) -> Task<Void, Never>? {
@@ -1697,7 +1908,53 @@ func makeMuteCommandFileWatcher(commandFile: URL?, stateFile: URL?, controller: 
     }
 }
 
+func makeMicrophoneCommandFileWatcher(commandFile: URL?, stateFile: URL?, controller: StreamController) -> Task<Void, Never>? {
+    guard let commandFile, let stateFile else {
+        return nil
+    }
+    return Task.detached {
+        var lastCommandID: String?
+        while !Task.isCancelled {
+            if let data = try? Data(contentsOf: commandFile),
+               let command = try? JSONDecoder().decode(MicrophoneCommand.self, from: data),
+               command.id != lastCommandID {
+                lastCommandID = command.id
+                do {
+                    try await controller.setRecordMicrophone(command.record_microphone)
+                    try writeMicrophoneCommandState(
+                        stateFile,
+                        state: MicrophoneCommandState(
+                            id: command.id,
+                            ok: true,
+                            record_microphone: command.record_microphone,
+                            error: nil
+                        )
+                    )
+                } catch {
+                    let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    try? writeMicrophoneCommandState(
+                        stateFile,
+                        state: MicrophoneCommandState(
+                            id: command.id,
+                            ok: false,
+                            record_microphone: command.record_microphone,
+                            error: message
+                        )
+                    )
+                }
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+}
+
 func writeMuteCommandState(_ stateFile: URL, state: MuteCommandState) throws {
+    let data = try JSONEncoder().encode(state)
+    try FileManager.default.createDirectory(at: stateFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try data.write(to: stateFile, options: [.atomic])
+}
+
+func writeMicrophoneCommandState(_ stateFile: URL, state: MicrophoneCommandState) throws {
     let data = try JSONEncoder().encode(state)
     try FileManager.default.createDirectory(at: stateFile.deletingLastPathComponent(), withIntermediateDirectories: true)
     try data.write(to: stateFile, options: [.atomic])

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
 from jobs.artifacts import ArtifactManager
 from transcripts.deepgram_client import normalize_deepgram_message, promote_interim_block, should_promote_interim
+
+
+TRANSCRIPT_SOURCES = ("system", "microphone")
 
 
 @dataclass
@@ -25,14 +27,14 @@ class TranscriptAppendResult:
 class TranscriptStore:
     def __init__(self, artifacts: ArtifactManager) -> None:
         self.artifacts = artifacts
-        self._snapshots: dict[str, TranscriptSnapshotState] = defaultdict(TranscriptSnapshotState)
+        self._snapshots: dict[str, dict[str, TranscriptSnapshotState] | TranscriptSnapshotState] = {}
 
     def append(self, job_id: str, raw_event: dict[str, Any]) -> TranscriptAppendResult:
         paths = self.artifacts.job_paths(job_id)
         with paths.deepgram_events.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(raw_event, sort_keys=True) + "\n")
         normalized = normalize_deepgram_message(raw_event)
-        snapshot = self._snapshots[job_id]
+        snapshot = self._source_snapshots(job_id)[self._source_for_event(normalized)]
         promoted = self._apply_normalized_event(snapshot, normalized)
         return TranscriptAppendResult(event=normalized, promoted=promoted)
 
@@ -47,6 +49,8 @@ class TranscriptStore:
         elif should_promote_interim(normalized):
             promoted = promote_interim_block(snapshot.interim_block or {"type": "interim", "text": snapshot.interim}, normalized)
             if promoted is not None:
+                if "source" in normalized and "source" not in promoted:
+                    promoted["source"] = normalized["source"]
                 snapshot.final_blocks.append(promoted)
                 snapshot.interim = ""
                 snapshot.interim_block = None
@@ -56,10 +60,18 @@ class TranscriptStore:
     def snapshot(self, job_id: str) -> dict[str, Any]:
         if job_id not in self._snapshots:
             self._snapshots[job_id] = self._rebuild(job_id)
-        elif self._snapshot_needs_rebuild(self._snapshots[job_id]):
+        elif self._snapshots_need_rebuild(self._source_snapshots(job_id)):
             self._snapshots[job_id] = self._rebuild(job_id)
-        snapshot = self._snapshots[job_id]
-        return {"final_blocks": snapshot.final_blocks, "interim": snapshot.interim}
+        snapshots = self._source_snapshots(job_id)
+        system_snapshot = snapshots["system"]
+        return {
+            "final_blocks": system_snapshot.final_blocks,
+            "interim": system_snapshot.interim,
+            "sources": {
+                source: {"final_blocks": snapshots[source].final_blocks, "interim": snapshots[source].interim}
+                for source in TRANSCRIPT_SOURCES
+            },
+        }
 
     def _snapshot_needs_rebuild(self, snapshot: TranscriptSnapshotState) -> bool:
         return any(
@@ -67,14 +79,40 @@ class TranscriptStore:
             for block in snapshot.final_blocks
         )
 
-    def _rebuild(self, job_id: str) -> TranscriptSnapshotState:
-        snapshot = TranscriptSnapshotState()
+    def _snapshots_need_rebuild(self, snapshots: dict[str, TranscriptSnapshotState]) -> bool:
+        return any(self._snapshot_needs_rebuild(snapshot) for snapshot in snapshots.values())
+
+    def _rebuild(self, job_id: str) -> dict[str, TranscriptSnapshotState]:
+        snapshots = self._empty_source_snapshots()
         path = self.artifacts.job_paths(job_id).deepgram_events
         if not path.exists():
-            return snapshot
+            return snapshots
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             normalized = normalize_deepgram_message(json.loads(line))
-            self._apply_normalized_event(snapshot, normalized)
+            self._apply_normalized_event(snapshots[self._source_for_event(normalized)], normalized)
+        return snapshots
+
+    def _source_snapshots(self, job_id: str) -> dict[str, TranscriptSnapshotState]:
+        snapshot = self._snapshots.get(job_id)
+        if snapshot is None:
+            snapshots = self._empty_source_snapshots()
+            self._snapshots[job_id] = snapshots
+            return snapshots
+        if isinstance(snapshot, TranscriptSnapshotState):
+            snapshots = self._empty_source_snapshots()
+            snapshots["system"] = snapshot
+            self._snapshots[job_id] = snapshots
+            return snapshots
+        for source in TRANSCRIPT_SOURCES:
+            snapshot.setdefault(source, TranscriptSnapshotState())
         return snapshot
+
+    @staticmethod
+    def _empty_source_snapshots() -> dict[str, TranscriptSnapshotState]:
+        return {source: TranscriptSnapshotState() for source in TRANSCRIPT_SOURCES}
+
+    @staticmethod
+    def _source_for_event(event: dict[str, Any]) -> str:
+        return "microphone" if event.get("source") == "microphone" else "system"

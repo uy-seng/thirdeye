@@ -132,6 +132,7 @@ class JobCreate(BaseModel):
     interim_results: bool | None = None
     summary_model: str | None = None
     record_screen: bool = True
+    record_microphone: bool = False
     generate_summary: bool = True
     mute_target_audio: bool = False
     notify_on_inactivity: bool = True
@@ -141,6 +142,10 @@ class JobCreate(BaseModel):
     @model_validator(mode="after")
     def validate_capture_selection(self) -> "JobCreate":
         resolve_capture_selection(self.capture_backend, self.capture_target)
+        if self.record_microphone and self.capture_backend != "macos_local":
+            raise ValueError("record_microphone is only supported for This Mac capture")
+        if self.record_microphone and self.mute_target_audio:
+            raise ValueError("record_microphone cannot be combined with mute_target_audio")
         if self.mute_target_audio:
             if self.capture_backend != "macos_local":
                 raise ValueError("mute_target_audio is only supported for This Mac capture")
@@ -169,6 +174,10 @@ class JobStopRequest(BaseModel):
 
 class JobMuteTargetAudioRequest(BaseModel):
     mute_target_audio: bool
+
+
+class JobRecordMicrophoneRequest(BaseModel):
+    record_microphone: bool
 
 
 class TranscriptSummarySource(BaseModel):
@@ -286,6 +295,7 @@ class JobTransitionResponse(BaseModel):
 class LiveSnapshot(BaseModel):
     final_blocks: list[dict[str, Any]] = Field(default_factory=list)
     interim: str = ""
+    sources: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class HealthCheckResult(BaseModel):

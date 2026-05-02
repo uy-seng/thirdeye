@@ -103,3 +103,47 @@ def test_store_promotes_pending_interim_when_terminal_metadata_arrives(settings)
             "promotion_reason": "metadata",
         }
     ]
+
+
+def test_store_keeps_system_and_microphone_transcripts_separate(settings) -> None:
+    store = TranscriptStore(ArtifactManager(settings))
+    job_id = "job-two-sources"
+
+    store.append(
+        job_id,
+        {
+            "source": "system",
+            "type": "Results",
+            "is_final": True,
+            "start": 1.0,
+            "duration": 1.0,
+            "channel": {"alternatives": [{"transcript": "system words", "words": []}]},
+        },
+    )
+    store.append(
+        job_id,
+        {
+            "source": "microphone",
+            "type": "Results",
+            "is_final": False,
+            "start": 2.0,
+            "duration": 1.0,
+            "channel": {"alternatives": [{"transcript": "mic draft", "words": []}]},
+        },
+    )
+
+    snapshot = store.snapshot(job_id)
+
+    assert snapshot["sources"]["system"]["final_blocks"] == [
+        {
+            "type": "final",
+            "text": "system words",
+            "speaker": None,
+            "start": 1.0,
+            "end": 2.0,
+            "source": "system",
+        }
+    ]
+    assert snapshot["sources"]["system"]["interim"] == ""
+    assert snapshot["sources"]["microphone"]["final_blocks"] == []
+    assert snapshot["sources"]["microphone"]["interim"] == "mic draft"

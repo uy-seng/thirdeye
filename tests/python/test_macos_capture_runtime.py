@@ -292,12 +292,18 @@ def test_start_recording_uses_recording_helper(tmp_path: Path, monkeypatch) -> N
         str(tmp_path / "recording.mp4"),
         "--fifo-path",
         str(tmp_path / "live_audio.pcm"),
+        "--microphone-fifo-path",
+        str(tmp_path / "microphone_audio.pcm"),
         "--stop-file",
         str(tmp_path / "recording.stop"),
         "--mute-command-file",
         str(tmp_path / "recording.mute-command.json"),
         "--mute-state-file",
         str(tmp_path / "recording.mute-state.json"),
+        "--microphone-command-file",
+        str(tmp_path / "recording.microphone-command.json"),
+        "--microphone-state-file",
+        str(tmp_path / "recording.microphone-state.json"),
         "--target-json",
         '{"id":"display:1","kind":"display","label":"Display 1","app_bundle_id":null,"app_name":null,"app_pid":null,"window_id":null,"display_id":"1"}',
     ]
@@ -340,6 +346,34 @@ def test_start_recording_passes_muted_app_audio_flag_to_helper(tmp_path: Path, m
     assert "--mute-target-audio" in captured["args"]
 
 
+def test_start_recording_passes_microphone_flag_to_helper(tmp_path: Path, monkeypatch) -> None:
+    runtime = MacOSCaptureRuntime()
+    runtime.runtime_dir = tmp_path
+    captured: dict[str, object] = {}
+
+    def fake_start(
+        args: list[str],
+        pid_file: Path,
+        log_file: Path,
+        startup_grace_seconds: float | None = None,
+    ) -> None:
+        captured["args"] = args
+        pid_file.write_text("1234", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "_start_long_running_helper", fake_start)
+
+    asyncio.run(
+        runtime.start_recording(
+            "job-123",
+            str(tmp_path / "recording.mp4"),
+            {"id": "display:1", "kind": "display", "label": "Display 1", "display_id": "1"},
+            record_microphone=True,
+        )
+    )
+
+    assert "--record-microphone" in captured["args"]
+
+
 def test_start_live_audio_reuses_recording_helper_fifo(tmp_path: Path, monkeypatch) -> None:
     runtime = MacOSCaptureRuntime()
     runtime.runtime_dir = tmp_path
@@ -365,7 +399,12 @@ def test_start_live_audio_reuses_recording_helper_fifo(tmp_path: Path, monkeypat
     )
 
     assert captured == []
-    assert payload == {"pid": recording_pid, "fifo_path": str(tmp_path / "live_audio.pcm"), "log_file": str(tmp_path / "recording.log")}
+    assert payload == {
+        "pid": recording_pid,
+        "fifo_path": str(tmp_path / "live_audio.pcm"),
+        "microphone_fifo_path": str(tmp_path / "microphone_audio.pcm"),
+        "log_file": str(tmp_path / "recording.log"),
+    }
     assert (tmp_path / "live-audio.pid").read_text(encoding="utf-8") == str(recording_pid)
     assert (tmp_path / "live-audio.reused-recording").read_text(encoding="utf-8") == str(recording_pid)
 
@@ -445,17 +484,28 @@ def test_start_live_audio_uses_dedicated_audio_helper_without_recording(tmp_path
         "live-audio",
         "--fifo-path",
         str(tmp_path / "live_audio.pcm"),
+        "--microphone-fifo-path",
+        str(tmp_path / "microphone_audio.pcm"),
         "--stop-file",
         str(tmp_path / "live-audio.stop"),
         "--mute-command-file",
         str(tmp_path / "live-audio.mute-command.json"),
         "--mute-state-file",
         str(tmp_path / "live-audio.mute-state.json"),
+        "--microphone-command-file",
+        str(tmp_path / "live-audio.microphone-command.json"),
+        "--microphone-state-file",
+        str(tmp_path / "live-audio.microphone-state.json"),
         "--target-json",
         '{"id":"display:1","kind":"display","label":"Display 1","app_bundle_id":null,"app_name":null,"app_pid":null,"window_id":null,"display_id":"1"}',
     ]
     assert captured["pid_file"] == tmp_path / "live-audio.pid"
-    assert payload == {"pid": 5678, "fifo_path": str(tmp_path / "live_audio.pcm"), "log_file": str(tmp_path / "live-audio.log")}
+    assert payload == {
+        "pid": 5678,
+        "fifo_path": str(tmp_path / "live_audio.pcm"),
+        "microphone_fifo_path": str(tmp_path / "microphone_audio.pcm"),
+        "log_file": str(tmp_path / "live-audio.log"),
+    }
 
 
 def test_start_live_audio_passes_muted_app_audio_flag_to_helper(tmp_path: Path, monkeypatch) -> None:
@@ -490,6 +540,33 @@ def test_start_live_audio_passes_muted_app_audio_flag_to_helper(tmp_path: Path, 
     )
 
     assert "--mute-target-audio" in captured["args"]
+
+
+def test_start_live_audio_passes_microphone_flag_to_helper(tmp_path: Path, monkeypatch) -> None:
+    runtime = MacOSCaptureRuntime()
+    runtime.runtime_dir = tmp_path
+    captured: dict[str, object] = {}
+
+    def fake_start(
+        args: list[str],
+        pid_file: Path,
+        log_file: Path,
+        startup_grace_seconds: float | None = None,
+    ) -> None:
+        captured["args"] = args
+        pid_file.write_text("5678", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "_start_long_running_helper", fake_start)
+
+    asyncio.run(
+        runtime.start_live_audio(
+            "job-123",
+            {"id": "display:1", "kind": "display", "label": "Display 1", "display_id": "1"},
+            record_microphone=True,
+        )
+    )
+
+    assert "--record-microphone" in captured["args"]
 
 
 def test_set_target_audio_muted_uses_recording_helper_when_recording_is_running(tmp_path: Path, monkeypatch) -> None:
@@ -542,6 +619,81 @@ def test_set_target_audio_muted_uses_dedicated_live_audio_helper_without_recordi
 
     assert payload == {"pid": live_audio_pid, "mute_target_audio": False}
     assert captured == {"pid_file": tmp_path / "live-audio.pid", "mute_target_audio": False}
+
+
+def test_set_record_microphone_enabled_uses_recording_helper_when_recording_is_running(tmp_path: Path, monkeypatch) -> None:
+    runtime = MacOSCaptureRuntime()
+    runtime.runtime_dir = tmp_path
+    recording_pid = os.getpid()
+    (tmp_path / "recording.pid").write_text(str(recording_pid), encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_send_microphone_command(pid_file: Path, record_microphone: bool) -> dict[str, object]:
+        captured["pid_file"] = pid_file
+        captured["record_microphone"] = record_microphone
+        return {"pid": recording_pid, "record_microphone": record_microphone}
+
+    monkeypatch.setattr(runtime, "_send_microphone_command", fake_send_microphone_command)
+
+    payload = asyncio.run(
+        runtime.set_record_microphone_enabled(
+            "job-123",
+            {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
+            True,
+        )
+    )
+
+    assert payload == {"pid": recording_pid, "record_microphone": True}
+    assert captured == {"pid_file": tmp_path / "recording.pid", "record_microphone": True}
+
+
+def test_set_record_microphone_enabled_uses_dedicated_live_audio_helper_without_recording(tmp_path: Path, monkeypatch) -> None:
+    runtime = MacOSCaptureRuntime()
+    runtime.runtime_dir = tmp_path
+    live_audio_pid = os.getpid()
+    (tmp_path / "live-audio.pid").write_text(str(live_audio_pid), encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_send_microphone_command(pid_file: Path, record_microphone: bool) -> dict[str, object]:
+        captured["pid_file"] = pid_file
+        captured["record_microphone"] = record_microphone
+        return {"pid": live_audio_pid, "record_microphone": record_microphone}
+
+    monkeypatch.setattr(runtime, "_send_microphone_command", fake_send_microphone_command)
+
+    payload = asyncio.run(
+        runtime.set_record_microphone_enabled(
+            "job-123",
+            {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
+            False,
+        )
+    )
+
+    assert payload == {"pid": live_audio_pid, "record_microphone": False}
+    assert captured == {"pid_file": tmp_path / "live-audio.pid", "record_microphone": False}
+
+
+def test_set_record_microphone_enabled_writes_command_and_waits_for_matching_state(tmp_path: Path, monkeypatch) -> None:
+    runtime = MacOSCaptureRuntime()
+    runtime.runtime_dir = tmp_path
+    pid_file = tmp_path / "live-audio.pid"
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    writes: list[dict[str, object]] = []
+
+    def fake_wait_for_microphone_state(state_file: Path, command_id: str) -> dict[str, object]:
+        command = (tmp_path / "live-audio.microphone-command.json").read_text(encoding="utf-8")
+        writes.append({"state_file": state_file, "command_id": command_id, "command": command})
+        return {"id": command_id, "ok": True, "record_microphone": True}
+
+    monkeypatch.setattr(runtime, "_wait_for_microphone_state", fake_wait_for_microphone_state)
+
+    payload = runtime._send_microphone_command(pid_file, True)
+
+    assert payload == {"pid": os.getpid(), "record_microphone": True}
+    assert len(writes) == 1
+    assert writes[0]["state_file"] == tmp_path / "live-audio.microphone-state.json"
+    assert f'"id": "{writes[0]["command_id"]}"' in str(writes[0]["command"])
+    assert '"record_microphone": true' in str(writes[0]["command"])
 
 
 def test_set_target_audio_muted_writes_command_and_waits_for_matching_state(tmp_path: Path, monkeypatch) -> None:

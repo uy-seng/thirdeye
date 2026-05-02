@@ -15,6 +15,13 @@ def _float_or_none(value: Any) -> float | None:
     return None
 
 
+def _with_source(message: dict[str, Any], normalized: dict[str, Any]) -> dict[str, Any]:
+    source = message.get("source")
+    if source in {"system", "microphone"}:
+        normalized["source"] = source
+    return normalized
+
+
 def normalize_deepgram_message(message: dict[str, Any]) -> dict[str, Any]:
     event_type = message.get("type")
     if event_type == "Results":
@@ -33,7 +40,7 @@ def normalize_deepgram_message(message: dict[str, Any]) -> dict[str, Any]:
         speech_final = message.get("speech_final")
         if isinstance(speech_final, bool):
             normalized["speech_final"] = speech_final
-        return normalized
+        return _with_source(message, normalized)
     if event_type == "Metadata":
         model_info = message.get("model_info") or {}
         normalized = {
@@ -44,12 +51,12 @@ def normalize_deepgram_message(message: dict[str, Any]) -> dict[str, Any]:
         duration = _float_or_none(message.get("duration"))
         if duration is not None:
             normalized["duration"] = duration
-        return normalized
+        return _with_source(message, normalized)
     if event_type == "SpeechStarted":
-        return {"type": "speech_started", "timestamp": float(message.get("timestamp", 0.0))}
+        return _with_source(message, {"type": "speech_started", "timestamp": float(message.get("timestamp", 0.0))})
     if event_type == "UtteranceEnd":
-        return {"type": "utterance_end", "timestamp": float(message.get("last_word_end", 0.0))}
-    return {"type": "warning", "message": "unknown_event", "raw_type": event_type}
+        return _with_source(message, {"type": "utterance_end", "timestamp": float(message.get("last_word_end", 0.0))})
+    return _with_source(message, {"type": "warning", "message": "unknown_event", "raw_type": event_type})
 
 
 def should_promote_interim(trigger: dict[str, Any]) -> bool:

@@ -107,6 +107,7 @@ def test_start_job_failure_marks_job_failed_and_allows_retry(client, monkeypatch
         job_id: str,
         target: dict[str, object],
         mute_target_audio: bool = False,
+        record_microphone: bool = False,
     ) -> dict[str, object]:
         raise httpx.ReadTimeout("timed out")
 
@@ -214,6 +215,7 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
         output_file: str,
         target: dict[str, object],
         mute_target_audio: bool = False,
+        record_microphone: bool = False,
     ) -> dict[str, object]:
         calls.append(("recording", mute_target_audio))
         return {"pid": 1111, "output_file": output_file}
@@ -222,6 +224,7 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
         job_id: str,
         target: dict[str, object],
         mute_target_audio: bool = False,
+        record_microphone: bool = False,
     ) -> dict[str, object]:
         calls.append(("live_audio", mute_target_audio))
         return {"pid": 2222}
@@ -248,6 +251,106 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
 
     assert response.status_code == 200
     assert calls == [("recording", True), ("live_audio", True)]
+
+
+def test_start_job_forwards_microphone_preference_without_muting_target_audio(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    backend = runtime.capture.capture_backends.require("macos_local")
+    calls: list[tuple[str, bool, bool]] = []
+
+    async def start_recording(
+        job_id: str,
+        output_file: str,
+        target: dict[str, object],
+        mute_target_audio: bool = False,
+        record_microphone: bool = False,
+    ) -> dict[str, object]:
+        calls.append(("recording", mute_target_audio, record_microphone))
+        return {"pid": 1111, "output_file": output_file}
+
+    async def start_live_audio(
+        job_id: str,
+        target: dict[str, object],
+        mute_target_audio: bool = False,
+        record_microphone: bool = False,
+    ) -> dict[str, object]:
+        calls.append(("live_audio", mute_target_audio, record_microphone))
+        return {"pid": 2222}
+
+    monkeypatch.setattr(backend, "start_recording", start_recording)
+    monkeypatch.setattr(backend, "start_live_audio", start_live_audio)
+
+    response = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "Microphone capture",
+            "capture_backend": "macos_local",
+            "record_microphone": True,
+            "capture_target": {
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls == [("recording", False, True), ("live_audio", False, True)]
+    assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
+
+
+def test_start_job_with_microphone_starts_system_and_microphone_relays(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    started_sources: list[str] = []
+
+    async def fake_start(job_id: str, stream_factory, job_options: dict[str, object], source: str = "system") -> None:
+        started_sources.append(source)
+
+    monkeypatch.setattr(runtime.capture.relay_manager, "start", fake_start)
+
+    response = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "Two source capture",
+            "capture_backend": "macos_local",
+            "capture_target": {
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+            "record_screen": False,
+            "record_microphone": True,
+            "generate_summary": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert started_sources == ["system", "microphone"]
+
+
+def test_start_job_rejects_microphone_capture_when_app_audio_mute_is_requested(client) -> None:
+    response = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "Conflicting audio choices",
+            "capture_backend": "macos_local",
+            "record_microphone": True,
+            "mute_target_audio": True,
+            "capture_target": {
+                "id": "application:chrome",
+                "kind": "application",
+                "label": "Google Chrome",
+                "app_bundle_id": "com.google.Chrome",
+                "app_name": "Google Chrome",
+                "app_pid": 4242,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "record_microphone cannot be combined with mute_target_audio" in response.text
 
 
 def test_mute_target_audio_endpoint_updates_active_local_app_capture_after_backend_ack(client, monkeypatch) -> None:
@@ -373,6 +476,175 @@ def test_mute_target_audio_endpoint_rejects_unsupported_backend_and_target(clien
 
     assert display_response.status_code == 400
     assert display_response.json() == {"detail": "runtime mute requires an app or window target"}
+
+
+def test_record_microphone_endpoint_updates_active_local_capture_after_backend_ack(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(
+        JobCreate(
+            title="Runtime microphone",
+            capture_backend="macos_local",
+            capture_target={
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        )
+    )
+    runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "test")
+    backend = runtime.capture_backends.require("macos_local")
+    calls: list[tuple[str, bool]] = []
+    started_sources: list[str] = []
+
+    async def set_record_microphone_enabled(job_id: str, target: dict[str, object], record_microphone: bool) -> dict[str, object]:
+        calls.append((job_id, record_microphone))
+        return {"pid": 4321, "record_microphone": record_microphone}
+
+    async def fake_start(job_id: str, stream_factory, job_options: dict[str, object], source: str = "system") -> None:
+        started_sources.append(source)
+
+    monkeypatch.setattr(backend, "set_record_microphone_enabled", set_record_microphone_enabled)
+    monkeypatch.setattr(runtime.capture.relay_manager, "start", fake_start)
+
+    response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": True})
+
+    assert response.status_code == 200
+    assert calls == [(job.id, True)]
+    assert started_sources == ["microphone"]
+    assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
+    assert runtime.jobs.get_job(job.id).metadata_json["session_preferences"]["record_microphone"] is True
+
+
+def test_record_microphone_endpoint_stops_only_microphone_relay_when_disabled(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(
+        JobCreate(
+            title="Runtime microphone stop",
+            capture_backend="macos_local",
+            record_microphone=True,
+            capture_target={
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        )
+    )
+    runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "test")
+    backend = runtime.capture_backends.require("macos_local")
+    calls: list[tuple[str, bool]] = []
+    stopped_sources: list[str | None] = []
+
+    async def set_record_microphone_enabled(job_id: str, target: dict[str, object], record_microphone: bool) -> dict[str, object]:
+        calls.append((job_id, record_microphone))
+        return {"pid": 4321, "record_microphone": record_microphone}
+
+    async def fake_stop(job_id: str, source: str | None = None) -> None:
+        stopped_sources.append(source)
+
+    monkeypatch.setattr(backend, "set_record_microphone_enabled", set_record_microphone_enabled)
+    monkeypatch.setattr(runtime.capture.relay_manager, "stop", fake_stop)
+
+    response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": False})
+
+    assert response.status_code == 200
+    assert calls == [(job.id, False)]
+    assert stopped_sources == ["microphone"]
+    assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is False
+
+
+def test_record_microphone_endpoint_is_idempotent_when_state_already_matches(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(
+        JobCreate(
+            title="Runtime microphone no-op",
+            capture_backend="macos_local",
+            record_microphone=True,
+            capture_target={
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        )
+    )
+    runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
+    backend = runtime.capture_backends.require("macos_local")
+
+    async def unexpected_set_record_microphone_enabled(job_id: str, target: dict[str, object], record_microphone: bool) -> dict[str, object]:
+        raise AssertionError("matching microphone state should not call the capture helper")
+
+    monkeypatch.setattr(backend, "set_record_microphone_enabled", unexpected_set_record_microphone_enabled)
+
+    response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": True})
+
+    assert response.status_code == 200
+    assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
+
+
+def test_record_microphone_endpoint_rejects_inactive_job(client) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(
+        JobCreate(
+            title="Inactive microphone",
+            capture_backend="macos_local",
+            capture_target={
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        )
+    )
+
+    response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": True})
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "capture must be recording before changing microphone"}
+
+
+def test_record_microphone_endpoint_rejects_unsupported_backend_and_muted_app_audio(client) -> None:
+    runtime = client.app.state.runtime
+    docker_job = runtime.jobs.create_job(JobCreate(title="Docker microphone"))
+    runtime.jobs.transition_job(docker_job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(docker_job.id, JobState.RECORDING, "test")
+
+    docker_response = client.post(f"/api/jobs/{docker_job.id}/record-microphone", json={"record_microphone": True})
+
+    assert docker_response.status_code == 400
+    assert docker_response.json() == {"detail": "runtime microphone recording is only available for This Mac capture"}
+
+    runtime.jobs.fail_job(docker_job.id, "test", "end active capture")
+    app_job = runtime.jobs.create_job(
+        JobCreate(
+            title="Muted app microphone",
+            capture_backend="macos_local",
+            mute_target_audio=True,
+            capture_target={
+                "id": "application:chrome",
+                "kind": "application",
+                "label": "Google Chrome",
+                "app_bundle_id": "com.google.Chrome",
+                "app_name": "Google Chrome",
+                "app_pid": 4242,
+            },
+        )
+    )
+    runtime.jobs.transition_job(app_job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(app_job.id, JobState.RECORDING, "test")
+
+    muted_response = client.post(f"/api/jobs/{app_job.id}/record-microphone", json={"record_microphone": True})
+
+    assert muted_response.status_code == 400
+    assert muted_response.json() == {"detail": "turn off muted app audio before recording microphone"}
 
 
 def test_stop_endpoint_accepts_active_job(client) -> None:

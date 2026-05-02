@@ -31,19 +31,75 @@ async function readPayload(response: Response) {
   return response.text();
 }
 
+function validationLocationText(value: unknown) {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value
+    .filter((item): item is string | number => typeof item === "string" || typeof item === "number")
+    .filter((item) => item !== "body" && item !== "query" && item !== "path")
+    .join(".");
+}
+
+function formatApiErrorDetail(detail: unknown): string {
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+        if (typeof item === "object" && item) {
+          const record = item as Record<string, unknown>;
+          const message = typeof record.msg === "string" ? record.msg : typeof record.message === "string" ? record.message : "";
+          if (!message) {
+            return "";
+          }
+          const location = validationLocationText(record.loc);
+          return location ? `${location}: ${message}` : message;
+        }
+        return "";
+      })
+      .filter(Boolean);
+    return messages.join("; ");
+  }
+  if (typeof detail === "object" && detail) {
+    const record = detail as Record<string, unknown>;
+    if (typeof record.msg === "string") {
+      return record.msg;
+    }
+    if (typeof record.message === "string") {
+      return record.message;
+    }
+    return JSON.stringify(detail);
+  }
+  return "";
+}
+
+function localServiceConnectionMessage() {
+  return "Could not connect to the local app service. Restart the app and try again.";
+}
+
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), {
+      ...init,
+      headers,
+    });
+  } catch {
+    throw new Error(localServiceConnectionMessage());
+  }
   const payload = await readPayload(response);
   if (!response.ok) {
     if (typeof payload === "object" && payload && "detail" in payload) {
-      throw new Error(String(payload.detail));
+      throw new Error(formatApiErrorDetail(payload.detail) || "Request failed.");
     }
     throw new Error(typeof payload === "string" && payload ? payload : "Request failed.");
   }
@@ -100,6 +156,7 @@ export function startCapture(payload: {
   capture_backend: CaptureBackend;
   capture_target?: CaptureTarget;
   record_screen: boolean;
+  record_microphone: boolean;
   generate_summary: boolean;
   mute_target_audio: boolean;
   notify_on_inactivity: boolean;
@@ -113,6 +170,7 @@ export function startCapture(payload: {
       capture_backend: payload.capture_backend,
       capture_target: payload.capture_target,
       record_screen: payload.record_screen,
+      record_microphone: payload.record_microphone,
       generate_summary: payload.generate_summary,
       mute_target_audio: payload.mute_target_audio,
       notify_on_inactivity: payload.notify_on_inactivity,
@@ -129,6 +187,13 @@ export function setTargetAudioMuted(jobId: string, muteTargetAudio: boolean) {
   return apiJson<JobResponse>(`/api/jobs/${jobId}/mute-target-audio`, {
     method: "POST",
     body: JSON.stringify({ mute_target_audio: muteTargetAudio }),
+  });
+}
+
+export function setRecordMicrophoneEnabled(jobId: string, recordMicrophone: boolean) {
+  return apiJson<JobResponse>(`/api/jobs/${jobId}/record-microphone`, {
+    method: "POST",
+    body: JSON.stringify({ record_microphone: recordMicrophone }),
   });
 }
 

@@ -75,14 +75,21 @@ export type VoiceNoteSummaryGenerateResponse = {
   provider: string;
 };
 
-export type LiveSnapshot = {
+export type LiveTranscriptSource = "system" | "microphone";
+
+export type LiveSourceSnapshot = {
   final_blocks: TranscriptBlock[];
   interim: string;
+};
+
+export type LiveSnapshot = LiveSourceSnapshot & {
+  sources?: Record<LiveTranscriptSource, LiveSourceSnapshot>;
 };
 
 export type TranscriptBlock = {
   type: "final" | "interim" | "status" | "warning" | "metadata" | "speech_started" | "utterance_end" | "complete";
   text?: string;
+  source?: LiveTranscriptSource;
   speaker?: number | null;
   start?: number;
   end?: number;
@@ -95,6 +102,7 @@ export type TranscriptBlock = {
 export type JobMetadataJson = Record<string, unknown> & {
   session_preferences?: {
     record_screen?: boolean;
+    record_microphone?: boolean;
     generate_summary?: boolean;
     mute_target_audio?: boolean;
     notify_on_inactivity?: boolean;

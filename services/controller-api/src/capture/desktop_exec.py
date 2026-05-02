@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 from pathlib import Path
 from typing import Any, AsyncIterator, Protocol
+from urllib.parse import urlencode
 
 import httpx
 
@@ -23,6 +24,7 @@ class CaptureClientProtocol(Protocol):
         output_file: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
+        record_microphone: bool = False,
     ) -> dict[str, Any]: ...
     async def stop_recording(self, job_id: str, output_file: str, target: dict[str, Any]) -> dict[str, Any]: ...
     async def start_live_audio(
@@ -30,6 +32,7 @@ class CaptureClientProtocol(Protocol):
         job_id: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
+        record_microphone: bool = False,
     ) -> dict[str, Any]: ...
     async def set_target_audio_muted(
         self,
@@ -37,8 +40,14 @@ class CaptureClientProtocol(Protocol):
         target: dict[str, Any],
         mute_target_audio: bool,
     ) -> dict[str, Any]: ...
+    async def set_record_microphone_enabled(
+        self,
+        job_id: str,
+        target: dict[str, Any],
+        record_microphone: bool,
+    ) -> dict[str, Any]: ...
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]: ...
-    async def stream_live_audio(self, job_id: str) -> AsyncIterator[bytes]: ...
+    async def stream_live_audio(self, job_id: str, source: str = "system") -> AsyncIterator[bytes]: ...
 
 
 DesktopClientProtocol = CaptureClientProtocol
@@ -120,6 +129,7 @@ class HttpCaptureClient:
         output_file: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
+        record_microphone: bool = False,
     ) -> dict[str, Any]:
         return await self._post(
             "/recording/start",
@@ -128,6 +138,7 @@ class HttpCaptureClient:
                 "output_file": output_file,
                 "target": target,
                 "mute_target_audio": mute_target_audio,
+                "record_microphone": record_microphone,
             },
         )
 
@@ -139,10 +150,16 @@ class HttpCaptureClient:
         job_id: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
+        record_microphone: bool = False,
     ) -> dict[str, Any]:
         return await self._post(
             "/live-audio/start",
-            {"job_id": job_id, "target": target, "mute_target_audio": mute_target_audio},
+            {
+                "job_id": job_id,
+                "target": target,
+                "mute_target_audio": mute_target_audio,
+                "record_microphone": record_microphone,
+            },
         )
 
     async def set_target_audio_muted(
@@ -156,12 +173,24 @@ class HttpCaptureClient:
             {"job_id": job_id, "target": target, "mute_target_audio": mute_target_audio},
         )
 
+    async def set_record_microphone_enabled(
+        self,
+        job_id: str,
+        target: dict[str, Any],
+        record_microphone: bool,
+    ) -> dict[str, Any]:
+        return await self._post(
+            "/microphone/record",
+            {"job_id": job_id, "target": target, "record_microphone": record_microphone},
+        )
+
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         return await self._post("/live-audio/stop", {"job_id": job_id, "target": target})
 
-    async def stream_live_audio(self, job_id: str) -> AsyncIterator[bytes]:
+    async def stream_live_audio(self, job_id: str, source: str = "system") -> AsyncIterator[bytes]:
+        query = urlencode({"job_id": job_id, "source": source})
         async with httpx.AsyncClient(base_url=self.base_url, timeout=None) as client:
-            async with client.stream("GET", f"/live-audio/stream?job_id={job_id}") as response:
+            async with client.stream("GET", f"/live-audio/stream?{query}") as response:
                 response.raise_for_status()
                 async for chunk in response.aiter_bytes():
                     yield chunk
@@ -190,6 +219,7 @@ class FakeCaptureClient:
         self._running_live_audio = False
         self._output_file: Path | None = None
         self._target_audio_muted = False
+        self._record_microphone = False
 
     async def health(self) -> dict[str, Any]:
         return {"status": "ok", "fake_mode": True}
@@ -211,12 +241,15 @@ class FakeCaptureClient:
         output_file: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
+        record_microphone: bool = False,
     ) -> dict[str, Any]:
         self._running_recording = True
         self._target_audio_muted = mute_target_audio
+        self._record_microphone = record_microphone
         self._output_file = Path(output_file)
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
         suffix = ":muted" if mute_target_audio else ""
+        suffix += ":microphone" if record_microphone else ""
         self._output_file.write_bytes(f"fake-mp4:{self.backend_name}:{target['id']}{suffix}".encode("utf-8"))
         return {"pid": self._recording_pid, "output_file": output_file}
 
@@ -231,9 +264,11 @@ class FakeCaptureClient:
         job_id: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
+        record_microphone: bool = False,
     ) -> dict[str, Any]:
         self._running_live_audio = True
         self._target_audio_muted = mute_target_audio
+        self._record_microphone = record_microphone
         return {"pid": self._live_audio_pid, "fifo_path": str(self.settings.recordings_root / "jobs" / job_id / "live_audio.pcm")}
 
     async def set_target_audio_muted(
@@ -245,14 +280,24 @@ class FakeCaptureClient:
         self._target_audio_muted = mute_target_audio
         return {"pid": self._recording_pid if self._running_recording else self._live_audio_pid, "mute_target_audio": mute_target_audio}
 
+    async def set_record_microphone_enabled(
+        self,
+        job_id: str,
+        target: dict[str, Any],
+        record_microphone: bool,
+    ) -> dict[str, Any]:
+        self._record_microphone = record_microphone
+        return {"pid": self._recording_pid if self._running_recording else self._live_audio_pid, "record_microphone": record_microphone}
+
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         self._running_live_audio = False
         return {"pid": self._live_audio_pid}
 
-    async def stream_live_audio(self, job_id: str) -> AsyncIterator[bytes]:
+    async def stream_live_audio(self, job_id: str, source: str = "system") -> AsyncIterator[bytes]:
+        chunk = b"\x00\x02" * 64 if source == "microphone" else b"\x00\x01" * 64
         for _ in range(3):
             await asyncio.sleep(0.05)
-            yield b"\x00\x01" * 64
+            yield chunk
 
 
 class FakeDesktopClient(FakeCaptureClient):

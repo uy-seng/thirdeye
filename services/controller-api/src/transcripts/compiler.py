@@ -9,6 +9,13 @@ from transcripts.deepgram_client import normalize_deepgram_message, promote_inte
 from core.utils import format_offset
 
 
+TRANSCRIPT_SOURCE_ORDER = ("system", "microphone")
+TRANSCRIPT_SOURCE_HEADINGS = {
+    "system": "System Recording",
+    "microphone": "Self",
+}
+
+
 @dataclass(frozen=True)
 class TranscriptCompileResult:
     text_path: Path
@@ -37,32 +44,39 @@ class TranscriptCompiler:
             "model": model,
             "language": language,
             "request_id": None,
+            "request_ids": {},
         }
         segments: list[dict[str, Any]] = []
         raw_lines: list[str] = []
         if events_path.exists():
             raw_lines = events_path.read_text(encoding="utf-8").splitlines()
-        pending_interim: dict[str, Any] | None = None
+        pending_interim: dict[str, dict[str, Any] | None] = {source: None for source in TRANSCRIPT_SOURCE_ORDER}
         for line in raw_lines:
             if not line.strip():
                 continue
             raw = json.loads(line)
             normalized = normalize_deepgram_message(raw)
+            source = self._source_for_segment(normalized)
             if normalized["type"] == "metadata":
-                metadata["request_id"] = normalized.get("request_id")
+                request_id = normalized.get("request_id")
+                if request_id and metadata["request_id"] is None:
+                    metadata["request_id"] = request_id
+                if request_id:
+                    metadata["request_ids"][source] = request_id
             if normalized["type"] == "final" and normalized.get("text"):
                 segments.append(normalized)
-                pending_interim = None
+                pending_interim[source] = None
             elif normalized["type"] == "interim":
-                pending_interim = normalized if str(normalized.get("text") or "").strip() else None
+                pending_interim[source] = normalized if str(normalized.get("text") or "").strip() else None
             elif should_promote_interim(normalized):
-                promoted = promote_interim_block(pending_interim, normalized)
+                promoted = promote_interim_block(pending_interim[source], normalized)
                 if promoted is not None:
                     segments.append(promoted)
-                    pending_interim = None
-        promoted = promote_interim_block(pending_interim, {"type": "stream_end"})
-        if promoted is not None:
-            segments.append(promoted)
+                    pending_interim[source] = None
+        for source, interim in pending_interim.items():
+            promoted = promote_interim_block(interim, {"type": "stream_end", "source": source})
+            if promoted is not None:
+                segments.append(promoted)
 
         text_lines = [
             f"Job ID: {metadata['job_id']}",
@@ -84,15 +98,24 @@ class TranscriptCompiler:
                 f"- Model: {metadata['model']}",
                 f"- Language: {metadata['language'] or 'auto'}",
                 "",
-                "## Transcript",
-                "",
             ]
         )
-        for segment in segments:
-            speaker_label = f"Speaker {segment['speaker']}" if segment.get("speaker") is not None else "Speaker ?"
-            line = f"[{format_offset(segment['start'])} - {format_offset(segment['end'])}] {speaker_label}: {segment['text']}"
-            text_lines.append(line)
-            markdown_lines.append(f"- {line}")
+        segments_by_source = self._segments_by_source(segments)
+        for source in TRANSCRIPT_SOURCE_ORDER:
+            heading = TRANSCRIPT_SOURCE_HEADINGS[source]
+            source_segments = segments_by_source[source]
+            text_lines.extend([heading, ""])
+            markdown_lines.extend([f"## {heading}", ""])
+            if not source_segments:
+                text_lines.extend(["No transcript captured.", ""])
+                markdown_lines.extend(["No transcript captured.", ""])
+                continue
+            for segment in source_segments:
+                line = self._segment_line(segment)
+                text_lines.append(line)
+                markdown_lines.append(f"- {line}")
+            text_lines.append("")
+            markdown_lines.append("")
 
         output_dir.mkdir(parents=True, exist_ok=True)
         text_path = output_dir / "transcript.txt"
@@ -109,3 +132,24 @@ class TranscriptCompiler:
             markdown_path=markdown_path,
             json_path=json_path,
         )
+
+    @staticmethod
+    def _source_for_segment(segment: dict[str, Any]) -> str:
+        return "microphone" if segment.get("source") == "microphone" else "system"
+
+    def _segments_by_source(self, segments: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        grouped = {source: [] for source in TRANSCRIPT_SOURCE_ORDER}
+        for segment in segments:
+            grouped[self._source_for_segment(segment)].append(segment)
+        return grouped
+
+    def _segment_line(self, segment: dict[str, Any]) -> str:
+        speaker_label = self._speaker_label(segment)
+        return f"[{format_offset(segment['start'])} - {format_offset(segment['end'])}] {speaker_label}: {segment['text']}"
+
+    def _speaker_label(self, segment: dict[str, Any]) -> str:
+        if self._source_for_segment(segment) == "microphone":
+            return TRANSCRIPT_SOURCE_HEADINGS["microphone"]
+        if segment.get("speaker") is not None:
+            return f"Speaker {segment['speaker']}"
+        return "Speaker ?"

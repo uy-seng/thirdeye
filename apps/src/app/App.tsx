@@ -8,6 +8,7 @@ import {
   getHealth,
   getJob,
   getJobs,
+  setRecordMicrophoneEnabled,
   setTargetAudioMuted,
   stopCapture,
 } from "../lib/api";
@@ -62,6 +63,7 @@ export function App() {
   const [selectedJob, setSelectedJob] = useState<JobDetailResponse | null>(null);
   const [stoppingJobId, setStoppingJobId] = useState<string | null>(null);
   const [mutingJobId, setMutingJobId] = useState<string | null>(null);
+  const [microphoneJobId, setMicrophoneJobId] = useState<string | null>(null);
   const [confirmingDeleteJobId, setConfirmingDeleteJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactFile[]>([]);
@@ -261,6 +263,20 @@ export function App() {
     }
   }
 
+  async function handleSetRecordMicrophone(jobId: string, enabled: boolean) {
+    setMicrophoneJobId(jobId);
+    try {
+      await setRecordMicrophoneEnabled(jobId, enabled);
+      await loadJobs(jobId);
+      await loadSelectedJob(jobId);
+      setNotice("");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to change microphone.");
+    } finally {
+      setMicrophoneJobId(null);
+    }
+  }
+
   function requestDeleteJob(jobId: string) {
     const job = selectedJob?.id === jobId ? selectedJob : jobs.find((candidate) => candidate.id === jobId);
     if (job && !canDeleteJob(job.state)) {
@@ -366,7 +382,9 @@ export function App() {
           <>
             <LiveCaptureControls
               job={liveJob ?? activeJob}
+              microphonePending={microphoneJobId === activeJob.id}
               mutePending={mutingJobId === activeJob.id}
+              onSetRecordMicrophone={(jobId, enabled) => void handleSetRecordMicrophone(jobId, enabled)}
               onSetMuted={(jobId, muted) => void handleSetTargetAudioMuted(jobId, muted)}
             />
             <div className="grid-two live-workspace">

@@ -12,6 +12,9 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from jobs.jobs import (
     CaptureConflictError,
+    CaptureMicrophoneError,
+    CaptureMicrophoneStateError,
+    CaptureMicrophoneUnsupportedError,
     CaptureMuteError,
     CaptureMuteStateError,
     CaptureMuteUnsupportedError,
@@ -25,6 +28,7 @@ from jobs.models import (
     HealthStatusResponse,
     JobCreate,
     JobMuteTargetAudioRequest,
+    JobRecordMicrophoneRequest,
     JobStopRequest,
     TranscriptSummaryGenerateRequest,
     TranscriptSummarySaveRequest,
@@ -45,10 +49,25 @@ async def iter_live_stream_events(runtime: AppRuntime, job_id: str) -> AsyncIter
     job = runtime.jobs.get_job(job_id)
     snapshot = runtime.transcript_store.snapshot(job_id)
     yield {"type": "status", "state": job.state}
-    for block in snapshot["final_blocks"]:
-        yield block
-    if snapshot["interim"]:
-        yield {"type": "interim", "text": snapshot["interim"]}
+    sources = snapshot.get("sources")
+    if isinstance(sources, dict):
+        for source in ("system", "microphone"):
+            source_snapshot = sources.get(source)
+            if not isinstance(source_snapshot, dict):
+                continue
+            for block in source_snapshot.get("final_blocks", []):
+                yield block
+            interim = source_snapshot.get("interim")
+            if interim:
+                payload = {"type": "interim", "text": interim}
+                if source == "microphone":
+                    payload["source"] = source
+                yield payload
+    else:
+        for block in snapshot["final_blocks"]:
+            yield block
+        if snapshot["interim"]:
+            yield {"type": "interim", "text": snapshot["interim"]}
     queue = runtime.transcript_hub.subscribe(job_id)
     try:
         while True:
@@ -259,6 +278,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except CaptureMuteStateError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except CaptureMuteError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=502)
+        return JSONResponse(job.model_dump())
+
+    @app.post("/api/jobs/{job_id}/record-microphone")
+    async def record_microphone(
+        job_id: str,
+        payload: JobRecordMicrophoneRequest,
+    ) -> JSONResponse:
+        try:
+            job = await runtime.capture.set_record_microphone_enabled(job_id, payload.record_microphone)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
+        except CaptureMicrophoneUnsupportedError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except CaptureMicrophoneStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except CaptureMicrophoneError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=502)
         return JSONResponse(job.model_dump())
 

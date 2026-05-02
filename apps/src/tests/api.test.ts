@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   API_BASE,
+  apiJson,
   apiUrl,
   artifactHref,
   deleteJob,
@@ -10,6 +11,7 @@ import {
   generateVoiceNoteSummary,
   getJobs,
   saveTranscriptSummary,
+  setRecordMicrophoneEnabled,
   setTargetAudioMuted,
   startCapture,
 } from "../lib/api";
@@ -41,6 +43,48 @@ test("controller requests do not attach local authentication state", async () =>
     assert.equal(headers.has("authorization"), false);
     assert.equal(calls[0]?.init?.credentials, undefined);
     assert.equal(artifactHref("/artifacts/job/summary.md"), "http://127.0.0.1:8788/artifacts/job/summary.md");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("apiJson formats structured FastAPI validation errors", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({
+      detail: [
+        {
+          type: "extra_forbidden",
+          loc: ["body", "record_microphone"],
+          msg: "Extra inputs are not permitted",
+          input: true,
+        },
+      ],
+    }),
+    { headers: { "content-type": "application/json" }, status: 422 },
+  );
+
+  try {
+    await assert.rejects(
+      () => apiJson("/api/jobs/start", { method: "POST", body: JSON.stringify({ record_microphone: true }) }),
+      /record_microphone: Extra inputs are not permitted/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("apiJson explains local service connection failures", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError("Load failed");
+  };
+
+  try {
+    await assert.rejects(
+      () => apiJson("/api/jobs/start", { method: "POST", body: JSON.stringify({ title: "Capture" }) }),
+      /Could not connect to the local app service\. Restart the app and try again\./,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -186,6 +230,7 @@ test("startCapture sends screen recording and summary preferences", async () => 
       title: "Transcript only",
       capture_backend: "macos_local",
       record_screen: false,
+      record_microphone: true,
       generate_summary: false,
       mute_target_audio: true,
       notify_on_inactivity: false,
@@ -219,6 +264,7 @@ test("startCapture sends screen recording and summary preferences", async () => 
         display_id: "1",
       },
       record_screen: false,
+      record_microphone: true,
       generate_summary: false,
       mute_target_audio: true,
       notify_on_inactivity: false,
@@ -296,6 +342,58 @@ test("setTargetAudioMuted posts the runtime mute preference", async () => {
     assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/jobs/job-123/mute-target-audio");
     assert.equal(calls[0]?.init?.method, "POST");
     assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { mute_target_audio: true });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("setRecordMicrophoneEnabled posts the runtime microphone preference", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return new Response(
+      JSON.stringify({
+        id: "job-123",
+        title: "Live capture",
+        source_url: null,
+        created_at: "2026-04-23T00:00:00Z",
+        started_at: "2026-04-23T00:00:01Z",
+        stopped_at: null,
+        state: "live_streaming",
+        max_duration_minutes: 30,
+        auto_stop_enabled: false,
+        silence_timeout_minutes: 5,
+        recording_path: null,
+        transcript_text_path: null,
+        transcript_events_path: null,
+        summary_path: null,
+        error_message: null,
+        capture_backend: "macos_local",
+        capture_target: {
+          id: "display:main",
+          kind: "display",
+          label: "Built-in Display",
+          app_bundle_id: null,
+          app_name: null,
+          app_pid: null,
+          window_id: null,
+          display_id: "main",
+        },
+        metadata_json: { session_preferences: { record_microphone: true } },
+      }),
+      { headers: { "content-type": "application/json" }, status: 200 },
+    );
+  };
+
+  try {
+    const result = await setRecordMicrophoneEnabled("job-123", true);
+
+    assert.equal(result.metadata_json.session_preferences?.record_microphone, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/jobs/job-123/record-microphone");
+    assert.equal(calls[0]?.init?.method, "POST");
+    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { record_microphone: true });
   } finally {
     globalThis.fetch = originalFetch;
   }

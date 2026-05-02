@@ -22,6 +22,7 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
   const [targets, setTargets] = useState<CaptureTarget[]>([]);
   const [targetId, setTargetId] = useState("");
   const [screenRecord, setScreenRecord] = useState(true);
+  const [recordMicrophone, setRecordMicrophone] = useState(false);
   const [muteTargetAudio, setMuteTargetAudio] = useState(false);
   const [generateSummary, setGenerateSummary] = useState(true);
   const [notifyOnInactivity, setNotifyOnInactivity] = useState(true);
@@ -29,9 +30,14 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
   const [busy, setBusy] = useState(false);
   const selectedTarget = targets.find((target) => target.id === targetId);
   const permissionBlocked = backend === "macos_local" && isScreenRecordingPermissionError(message);
-  const canMuteTargetAudio = backend === "macos_local" && Boolean(selectedTarget && ["application", "window"].includes(selectedTarget.kind));
+  const canRecordMicrophone = backend === "macos_local";
+  const canMuteTargetAudio =
+    backend === "macos_local" && !recordMicrophone && Boolean(selectedTarget && ["application", "window"].includes(selectedTarget.kind));
   const activeCaptureMessage = "Stop the current session before starting a new one.";
   const muteTargetHelp = "This mutes the selected app while capture runs. The transcript and recording still receive audio.";
+  const muteTargetDisabledHelp = recordMicrophone
+    ? "Turn off microphone recording to use silent app capture."
+    : "Choose an app or window to use silent capture.";
 
   async function loadTargets(nextBackend = backend) {
     setMessage("");
@@ -63,6 +69,12 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
       setMuteTargetAudio(false);
     }
   }, [canMuteTargetAudio]);
+
+  useEffect(() => {
+    if (!canRecordMicrophone) {
+      setRecordMicrophone(false);
+    }
+  }, [canRecordMicrophone]);
 
   async function sendTestNotification() {
     setMessage("");
@@ -102,8 +114,9 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
           capture_backend: backend,
           capture_target: selectedTarget,
           record_screen: screenRecord,
+          record_microphone: canRecordMicrophone ? recordMicrophone : false,
           generate_summary: generateSummary,
-          mute_target_audio: canMuteTargetAudio ? muteTargetAudio : false,
+          mute_target_audio: canMuteTargetAudio && !recordMicrophone ? muteTargetAudio : false,
           notify_on_inactivity: notifyOnInactivity,
           silence_timeout_minutes: SILENCE_NOTIFICATION_TIMEOUT_MINUTES,
         }),
@@ -157,6 +170,18 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
           </label>
           <label className="option-row">
             <input
+              checked={recordMicrophone}
+              disabled={!canRecordMicrophone}
+              onChange={(event) => setRecordMicrophone(event.target.checked)}
+              type="checkbox"
+            />
+            <span>
+              <strong>Record microphone</strong>
+              <small>{canRecordMicrophone ? "Use your microphone without changing other apps." : "Microphone recording works with This Mac."}</small>
+            </span>
+          </label>
+          <label className="option-row">
+            <input
               checked={muteTargetAudio}
               disabled={!canMuteTargetAudio}
               onChange={(event) => setMuteTargetAudio(event.target.checked)}
@@ -164,7 +189,7 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
             />
             <span>
               <strong>Mute this app for me</strong>
-              <small>{canMuteTargetAudio ? muteTargetHelp : "Choose an app or window to use silent capture."}</small>
+              <small>{canMuteTargetAudio ? muteTargetHelp : muteTargetDisabledHelp}</small>
             </span>
           </label>
           <label className="option-row">
