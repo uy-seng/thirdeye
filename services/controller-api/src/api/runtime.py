@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from jobs.artifacts import ArtifactManager
 from capture.backends import CaptureBackendRegistry, build_capture_backends
+from capture.desktop_sessions import DesktopSessionManager
 from db.db import Base, create_session_factory, ensure_schema_compatibility
 from transcripts.deepgram_client import DeepgramClient
 from transcripts.deepgram_relay import RelayManager
@@ -34,6 +35,7 @@ class AppRuntime:
     transcript_store: TranscriptStore
     recovery: RecoveryService
     capture_backends: CaptureBackendRegistry
+    desktop_sessions: DesktopSessionManager
     desktop: object
     openclaw: OpenClawClient
     transcript_summary_cache: TranscriptSummaryCache
@@ -52,7 +54,8 @@ def create_runtime(settings: Settings) -> AppRuntime:
     transcript_store = TranscriptStore(artifacts)
     state_machine = JobStateMachine()
     jobs = JobRepository(session_factory, settings, artifacts, state_machine)
-    capture_backends = build_capture_backends(settings)
+    desktop_sessions = DesktopSessionManager(settings)
+    capture_backends = build_capture_backends(settings, desktop_sessions)
     desktop = capture_backends.require("docker_desktop")
     openclaw = OpenClawClient(settings)
     transcript_summary_cache = TranscriptSummaryCache()
@@ -94,6 +97,7 @@ def create_runtime(settings: Settings) -> AppRuntime:
         transcript_store=transcript_store,
         recovery=recovery,
         capture_backends=capture_backends,
+        desktop_sessions=desktop_sessions,
         desktop=desktop,
         openclaw=openclaw,
         transcript_summary_cache=transcript_summary_cache,

@@ -6,6 +6,7 @@ import {
   isEmptyTranscriptResult,
   isTranscriptActivity,
   notifyOnInactivityEnabled,
+  silenceNotificationRecordingLabel,
   silenceNotificationTimeoutMsForJob,
 } from "./silence-notifications";
 import {
@@ -23,51 +24,65 @@ function elapsedMsSince(timestamp: string | null) {
   return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
 }
 
-export function useSilenceNotification(job: JobResponse | null, onPermissionUnavailable: (message: string) => void) {
+export function useSilenceNotification(jobs: JobResponse[] | JobResponse | null, onPermissionUnavailable: (message: string) => void) {
   const onPermissionUnavailableRef = useRef(onPermissionUnavailable);
+  const activeJobs = Array.isArray(jobs) ? jobs : jobs ? [jobs] : [];
+  const dependencyKey = activeJobs.map((job) => `${job.id}:${job.silence_timeout_minutes}:${job.title}:${job.capture_target.label}`).join("|");
 
   useEffect(() => {
     onPermissionUnavailableRef.current = onPermissionUnavailable;
   }, [onPermissionUnavailable]);
 
   useEffect(() => {
-    if (!job || !notifyOnInactivityEnabled(job)) {
+    if (activeJobs.length === 0) {
       return;
     }
 
-    const activeJob = job;
     let closed = false;
-    const timeoutMs = silenceNotificationTimeoutMsForJob(activeJob);
-    const stream = new EventSource(apiUrl(`/api/jobs/${activeJob.id}/live/stream`));
+    const streams: EventSource[] = [];
+    const cleanupJobs: string[] = [];
 
-    void startSilenceNotificationMonitor({
-      jobId: activeJob.id,
-      title: activeJob.title,
-      timeoutMs,
-      elapsedMs: elapsedMsSince(activeJob.started_at ?? activeJob.created_at),
-    }).catch(() => {
-      if (!closed) {
-        onPermissionUnavailableRef.current(SILENCE_ALERT_START_FAILED_MESSAGE);
+    for (const activeJob of activeJobs) {
+      if (!notifyOnInactivityEnabled(activeJob)) {
+        continue;
       }
-    });
+      const timeoutMs = silenceNotificationTimeoutMsForJob(activeJob);
+      const stream = new EventSource(apiUrl(`/api/jobs/${activeJob.id}/live/stream`));
+      streams.push(stream);
+      cleanupJobs.push(activeJob.id);
 
-    function close() {
-      closed = true;
-      void stopSilenceNotificationMonitor(activeJob.id);
-      stream.close();
+      void startSilenceNotificationMonitor({
+        jobId: activeJob.id,
+        title: silenceNotificationRecordingLabel(activeJob),
+        timeoutMs,
+        elapsedMs: elapsedMsSince(activeJob.started_at ?? activeJob.created_at),
+      }).catch(() => {
+        if (!closed) {
+          onPermissionUnavailableRef.current(SILENCE_ALERT_START_FAILED_MESSAGE);
+        }
+      });
+
+      stream.onmessage = (message) => {
+        const event = JSON.parse(message.data) as TranscriptBlock;
+        if (isTranscriptActivity(event)) {
+          void recordSilenceNotificationActivity(activeJob.id);
+        } else if (isEmptyTranscriptResult(event)) {
+          return;
+        } else if (event.type === "complete") {
+          void stopSilenceNotificationMonitor(activeJob.id);
+          stream.close();
+        }
+      };
     }
 
-    stream.onmessage = (message) => {
-      const event = JSON.parse(message.data) as TranscriptBlock;
-      if (isTranscriptActivity(event)) {
-        void recordSilenceNotificationActivity(activeJob.id);
-      } else if (isEmptyTranscriptResult(event)) {
-        return;
-      } else if (event.type === "complete") {
-        close();
+    return () => {
+      closed = true;
+      for (const jobId of cleanupJobs) {
+        void stopSilenceNotificationMonitor(jobId);
+      }
+      for (const stream of streams) {
+        stream.close();
       }
     };
-
-    return close;
-  }, [job?.id, job?.silence_timeout_minutes, job?.title]);
+  }, [dependencyKey]);
 }

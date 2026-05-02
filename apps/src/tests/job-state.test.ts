@@ -7,6 +7,7 @@ import {
   canToggleMicrophoneRecording,
   canToggleTargetAudioMute,
   completedJobWarnings,
+  desktopSessionActivityLabel,
   formatStateLabel,
   recordMicrophoneEnabled,
   stateTone,
@@ -37,6 +38,33 @@ test("allows deleting only inactive jobs", () => {
   assert.equal(canDeleteJob("failed"), true);
   assert.equal(canDeleteJob("recording"), false);
   assert.equal(canDeleteJob("summarizing"), false);
+});
+
+test("desktop session labels post-stop work without saying it is recording", () => {
+  assert.equal(
+    desktopSessionActivityLabel({
+      active_job_id: "job-1",
+      active_job_state: "recording",
+      browser_url: "http://127.0.0.1:3002",
+    }),
+    "Recording now",
+  );
+  assert.equal(
+    desktopSessionActivityLabel({
+      active_job_id: "job-1",
+      active_job_state: "summarizing",
+      browser_url: "http://127.0.0.1:3002",
+    }),
+    "Finishing up",
+  );
+  assert.equal(
+    desktopSessionActivityLabel({
+      active_job_id: null,
+      active_job_state: null,
+      browser_url: "http://127.0.0.1:3002",
+    }),
+    "http://127.0.0.1:3002",
+  );
 });
 
 test("surfaces completed jobs with summary warnings", () => {

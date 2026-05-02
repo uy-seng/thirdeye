@@ -169,6 +169,11 @@ class JobRepository:
                     return JobResponse.from_orm_job(row)
         return None
 
+    def active_jobs(self) -> list[JobResponse]:
+        with self.session_factory() as session:
+            rows = session.execute(select(Job).order_by(Job.created_at.desc())).scalars().all()
+            return [JobResponse.from_orm_job(row) for row in rows if JobState(row.state) in ACTIVE_JOB_STATES]
+
     def update_runtime_fields(self, job_id: str, **fields: Any) -> JobResponse:
         with self.session_factory() as session:
             job = self.get_job_orm(session, job_id)
@@ -368,14 +373,39 @@ class CaptureRuntime:
     async def _start_deepgram_relay(self, job: JobResponse, backend, source: str) -> None:
         await self.relay_manager.start(
             job.id,
-            lambda: backend.stream_live_audio(job.id, source=source),
+            lambda: self._stream_live_audio(backend, job, source),
             self._relay_job_options(job),
             source=source,
         )
 
+    async def _stream_live_audio(self, backend, job: JobResponse, source: str):
+        if hasattr(backend, "stream_live_audio_for_target"):
+            async for chunk in backend.stream_live_audio_for_target(job.id, job.capture_target, source=source):
+                yield chunk
+            return
+        async for chunk in backend.stream_live_audio(job.id, source=source):
+            yield chunk
+
+    def _conflicting_active_job(self, capture_backend: str, capture_target: dict[str, Any]) -> str | None:
+        target_id = capture_target.get("id")
+        for active_job in self.jobs.active_jobs():
+            if active_job.capture_backend == "macos_local" or capture_backend == "macos_local":
+                return "only one active This Mac capture is allowed"
+            if active_job.capture_backend == "docker_desktop" and active_job.capture_target.get("id") == target_id:
+                return "that isolated desktop is already recording"
+        return None
+
     async def start_capture(self, payload: JobCreate) -> JobResponse:
-        if self.jobs.active_job() is not None:
-            raise CaptureConflictError("only one active capture is allowed")
+        if payload.capture_backend == "docker_desktop" and payload.capture_target is None:
+            targets = await self.capture_backends.require("docker_desktop").list_targets()
+            available_targets = [target for target in targets if target.get("available", True)]
+            if len(available_targets) != 1:
+                raise CaptureStartupError("create an isolated desktop before starting a capture")
+            payload = payload.model_copy(update={"capture_target": available_targets[0]})
+
+        capture_backend, capture_target = resolve_capture_selection(payload.capture_backend, payload.capture_target)
+        if message := self._conflicting_active_job(capture_backend, capture_target.model_dump()):
+            raise CaptureConflictError(message)
 
         job = self.jobs.create_job(payload)
         backend = self._backend_for_job(job)

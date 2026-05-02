@@ -36,7 +36,13 @@ class Settings(BaseModel):
     artifacts_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "artifacts"
     recordings_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "recordings"
     controller_events_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller-events"
+    desktop_sessions_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions"
+    desktop_sessions_registry_path: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions" / "sessions.json"
     desktop_base_url: str = "http://127.0.0.1:8790"
+    desktop_image: str = "thirdeye-desktop:local"
+    desktop_browser_port_start: int = 3000
+    desktop_agent_port_start: int = 8790
+    max_desktop_sessions: int = 4
     macos_capture_base_url: str = "http://127.0.0.1:8791"
     openclaw_base_url: str = "http://127.0.0.1:18789"
     openclaw_config_path: Path = OPENCLAW_CONFIG_PATH_DEFAULT
@@ -71,7 +77,15 @@ class Settings(BaseModel):
             artifacts_root=Path(env.get("ARTIFACTS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "artifacts"))),
             recordings_root=Path(env.get("RECORDINGS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "recordings"))),
             controller_events_root=Path(env.get("CONTROLLER_EVENTS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller-events"))),
+            desktop_sessions_root=Path(env.get("DESKTOP_SESSIONS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions"))),
+            desktop_sessions_registry_path=Path(
+                env.get("DESKTOP_SESSIONS_REGISTRY_PATH", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions" / "sessions.json"))
+            ),
             desktop_base_url=env.get("DESKTOP_BASE_URL", "http://127.0.0.1:8790"),
+            desktop_image=env.get("DESKTOP_IMAGE", "thirdeye-desktop:local"),
+            desktop_browser_port_start=int(env.get("DESKTOP_BROWSER_PORT_START", "3000")),
+            desktop_agent_port_start=int(env.get("DESKTOP_AGENT_PORT_START", "8790")),
+            max_desktop_sessions=int(env.get("MAX_DESKTOP_SESSIONS", "4")),
             macos_capture_base_url=env.get("MACOS_CAPTURE_BASE_URL", "http://127.0.0.1:8791"),
             openclaw_base_url=env.get("OPENCLAW_BASE_URL", "http://127.0.0.1:18789"),
             openclaw_config_path=openclaw_config_path,

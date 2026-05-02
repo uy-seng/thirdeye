@@ -19,7 +19,6 @@ def test_service_status_reports_core_macos_app_services(monkeypatch, tmp_path: P
     assert [report["name"] for report in status["reports"]] == [
         "Controller API",
         "This Mac capture",
-        "Isolated desktop",
         "OpenClaw",
     ]
     assert status["reports"][0]["running"] is True
@@ -54,48 +53,13 @@ def test_start_services_uses_supervisor_without_starting_next_or_docker(monkeypa
     monkeypatch.setattr(local_services, "spawn_service", fake_spawn_service)
     monkeypatch.setattr(local_services, "run_shell", fake_run_shell)
 
-    result = local_services.start_services(repo_root=repo_root, runtime_root=tmp_path / "runtime", include_desktop=False)
+    result = local_services.start_services(repo_root=repo_root, runtime_root=tmp_path / "runtime")
 
     assert result["ok"] is True
     assert [name for name, _ in calls] == ["macos-capture-agent", "controller-api"]
     legacy_web_path = "apps" + "/web"
     assert all(legacy_web_path not in command for _, command in calls)
     assert all("docker compose" not in command for _, command in calls)
-
-
-def test_start_services_passes_runtime_root_to_desktop_compose(monkeypatch, tmp_path: Path) -> None:
-    from core import local_services
-
-    calls: list[tuple[str, str]] = []
-    repo_root = tmp_path / "repo"
-    runtime_root = tmp_path / "runtime root"
-    repo_root.mkdir()
-    (repo_root / "Makefile").write_text("help:\n", encoding="utf-8")
-    (repo_root / "infra").mkdir()
-    (repo_root / "infra" / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
-
-    monkeypatch.setattr(local_services, "is_port_open", lambda port: False)
-    monkeypatch.setattr(
-        local_services,
-        "ensure_macos_capture_helper",
-        lambda repo_root: repo_root / "services" / "macos-capture-agent" / "bin" / "helper",
-    )
-    monkeypatch.setattr(local_services, "wait_for_port_open", lambda port, name: None)
-    monkeypatch.setattr(
-        local_services,
-        "spawn_service",
-        lambda *, repo_root, runtime_root, name, command: calls.append((name, command)),
-    )
-    monkeypatch.setattr(local_services, "run_shell", lambda repo_root, command: calls.append(("shell", command)))
-
-    result = local_services.start_services(repo_root=repo_root, runtime_root=runtime_root, include_desktop=True)
-
-    assert result["ok"] is True
-    assert calls[0] == (
-        "shell",
-        f"THIRDEYE_RUNTIME_ROOT={local_services.shell_escape(runtime_root)} "
-        "docker compose --env-file .env -f infra/compose.yaml up -d --remove-orphans",
-    )
 
 
 def test_start_services_restarts_supervised_macos_agent_after_permission_denial(monkeypatch, tmp_path: Path) -> None:
@@ -133,16 +97,93 @@ def test_start_services_restarts_supervised_macos_agent_after_permission_denial(
         lambda repo_root: repo_root / "services" / "macos-capture-agent" / "bin" / "helper",
     )
     monkeypatch.setattr(local_services, "macos_capture_permission_denied", lambda: True, raising=False)
+    monkeypatch.setattr(local_services, "controller_api_supports_desktops", lambda: True, raising=False)
     monkeypatch.setattr(local_services, "stop_supervised_service", fake_stop_supervised_service, raising=False)
     monkeypatch.setattr(local_services, "wait_for_port_closed", lambda port: calls.append(("wait", port)), raising=False)
     monkeypatch.setattr(local_services, "spawn_service", fake_spawn_service)
 
-    result = local_services.start_services(repo_root=repo_root, runtime_root=runtime_root, include_desktop=False)
+    result = local_services.start_services(repo_root=repo_root, runtime_root=runtime_root)
 
     assert result["ok"] is True
     assert calls[0] == ("stop", "macos-capture-agent")
     assert calls[1] == ("wait", local_services.MACOS_CAPTURE_PORT)
     assert calls[2][0:2] == ("spawn", "macos-capture-agent")
+
+
+def test_start_services_restarts_supervised_stale_controller_api(monkeypatch, tmp_path: Path) -> None:
+    from core import local_services
+
+    calls: list[tuple[str, str] | tuple[str, int] | tuple[str, str, str]] = []
+    repo_root = tmp_path / "repo"
+    runtime_root = tmp_path / "runtime"
+    supervisor_dir = runtime_root / "supervisor"
+    repo_root.mkdir()
+    supervisor_dir.mkdir(parents=True)
+    (repo_root / "Makefile").write_text("help:\n", encoding="utf-8")
+    (repo_root / "infra").mkdir()
+    (repo_root / "infra" / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    (supervisor_dir / "controller-api.pid").write_text("1234", encoding="utf-8")
+
+    open_ports = {local_services.CONTROLLER_API_PORT, local_services.MACOS_CAPTURE_PORT}
+
+    def fake_is_port_open(port: int) -> bool:
+        return port in open_ports
+
+    def fake_stop_supervised_service(selected_runtime_root: Path, name: str) -> None:
+        calls.append(("stop", name))
+        open_ports.discard(local_services.CONTROLLER_API_PORT)
+
+    def fake_spawn_service(*, repo_root: Path, runtime_root: Path, name: str, command: str) -> None:
+        calls.append(("spawn", name, command))
+        if name == "controller-api":
+            open_ports.add(local_services.CONTROLLER_API_PORT)
+
+    monkeypatch.setattr(local_services, "is_port_open", fake_is_port_open)
+    monkeypatch.setattr(
+        local_services,
+        "ensure_macos_capture_helper",
+        lambda repo_root: repo_root / "services" / "macos-capture-agent" / "bin" / "helper",
+    )
+    monkeypatch.setattr(local_services, "controller_api_supports_desktops", lambda: False, raising=False)
+    monkeypatch.setattr(local_services, "stop_supervised_service", fake_stop_supervised_service, raising=False)
+    monkeypatch.setattr(local_services, "wait_for_port_closed", lambda port: calls.append(("wait", port)), raising=False)
+    monkeypatch.setattr(local_services, "spawn_service", fake_spawn_service)
+    monkeypatch.setattr(local_services, "wait_for_port_open", lambda port, name: None)
+
+    result = local_services.start_services(repo_root=repo_root, runtime_root=runtime_root)
+
+    assert result["ok"] is True
+    assert calls[0] == ("stop", "controller-api")
+    assert calls[1] == ("wait", local_services.CONTROLLER_API_PORT)
+    assert calls[2][0:2] == ("spawn", "controller-api")
+
+
+def test_start_services_rejects_unsupervised_stale_controller_api(monkeypatch, tmp_path: Path) -> None:
+    import pytest
+
+    from core import local_services
+
+    repo_root = tmp_path / "repo"
+    runtime_root = tmp_path / "runtime"
+    repo_root.mkdir()
+    (repo_root / "Makefile").write_text("help:\n", encoding="utf-8")
+    (repo_root / "infra").mkdir()
+    (repo_root / "infra" / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        local_services,
+        "is_port_open",
+        lambda port: port in {local_services.CONTROLLER_API_PORT, local_services.MACOS_CAPTURE_PORT},
+    )
+    monkeypatch.setattr(
+        local_services,
+        "ensure_macos_capture_helper",
+        lambda repo_root: repo_root / "services" / "macos-capture-agent" / "bin" / "helper",
+    )
+    monkeypatch.setattr(local_services, "controller_api_supports_desktops", lambda: False, raising=False)
+
+    with pytest.raises(RuntimeError, match="does not support isolated desktops"):
+        local_services.start_services(repo_root=repo_root, runtime_root=runtime_root)
 
 
 def test_start_services_fails_when_spawned_macos_agent_never_opens_port(monkeypatch, tmp_path: Path) -> None:
@@ -167,7 +208,7 @@ def test_start_services_fails_when_spawned_macos_agent_never_opens_port(monkeypa
     monkeypatch.setenv("THIRDEYE_SERVICE_STARTUP_TIMEOUT_SECONDS", "0.01")
 
     with pytest.raises(RuntimeError, match="macos-capture-agent did not start listening"):
-        local_services.start_services(repo_root=repo_root, runtime_root=runtime_root, include_desktop=False)
+        local_services.start_services(repo_root=repo_root, runtime_root=runtime_root)
 
 
 def test_controller_api_command_uses_host_openclaw_gateway(tmp_path: Path) -> None:
@@ -176,7 +217,28 @@ def test_controller_api_command_uses_host_openclaw_gateway(tmp_path: Path) -> No
     command = local_services.controller_api_command(tmp_path / "runtime")
 
     assert "OPENCLAW_BASE_URL=${LOCAL_OPENCLAW_BASE_URL:-http://127.0.0.1:18789}" in command
+    assert f"DESKTOP_SESSIONS_ROOT={local_services.shell_escape(tmp_path / 'runtime' / 'desktop-sessions')}" in command
+    assert (
+        f"DESKTOP_SESSIONS_REGISTRY_PATH={local_services.shell_escape(tmp_path / 'runtime' / 'desktop-sessions' / 'sessions.json')}"
+        in command
+    )
     assert command.index("set +a;") < command.index("OPENCLAW_BASE_URL=")
+
+
+def test_controller_api_command_resolves_relative_runtime_paths(monkeypatch, tmp_path: Path) -> None:
+    from core import local_services
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "Makefile").write_text("help:\n", encoding="utf-8")
+    (repo_root / "infra").mkdir()
+    (repo_root / "infra" / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    command = local_services.controller_api_command(Path("runtime"), repo_root=repo_root)
+
+    assert f"RECORDINGS_ROOT={local_services.shell_escape(tmp_path / 'runtime' / 'recordings')}" in command
+    assert f"DESKTOP_SESSIONS_ROOT={local_services.shell_escape(tmp_path / 'runtime' / 'desktop-sessions')}" in command
 
 
 def test_doctor_report_uses_single_setup_contract(monkeypatch, tmp_path: Path) -> None:

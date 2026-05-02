@@ -10,6 +10,13 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from capture.desktop_sessions import (
+    DesktopSessionCreateRequest,
+    DesktopSessionError,
+    DesktopSessionLimitError,
+    DesktopSessionNotFoundError,
+    DesktopSessionsResponse,
+)
 from jobs.jobs import (
     CaptureConflictError,
     CaptureMicrophoneError,
@@ -24,11 +31,10 @@ from jobs.models import (
     ArtifactsOverviewItem,
     ArtifactsOverviewResponse,
     CaptureTargetsResponse,
-    HealthCheckResult,
-    HealthStatusResponse,
     JobCreate,
     JobMuteTargetAudioRequest,
     JobRecordMicrophoneRequest,
+    JobResponse,
     JobStopRequest,
     TranscriptSummaryGenerateRequest,
     TranscriptSummarySaveRequest,
@@ -181,31 +187,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.runtime = runtime
 
-    async def desktop_health_payload() -> HealthCheckResult:
-        try:
-            details = await runtime.desktop.health()
-            return HealthCheckResult(ok=True, status=str(details.get("status", "ok")), details=details)
-        except Exception as exc:
-            return HealthCheckResult(ok=False, status="unavailable", details={"detail": str(exc)})
-
-    async def deepgram_health_payload() -> HealthCheckResult:
-        details = {"ok": bool(app_settings.deepgram_api_key or app_settings.fake_mode), "provider": "fake" if app_settings.fake_mode else "deepgram"}
-        return HealthCheckResult(ok=details["ok"], status="configured" if details["ok"] else "missing", details=details)
-
-    async def openclaw_health_payload() -> HealthCheckResult:
-        try:
-            details = await runtime.openclaw.health()
-            return HealthCheckResult(ok=True, status=str(details.get("status", "ok")), details=details)
-        except Exception as exc:
-            return HealthCheckResult(ok=False, status="unavailable", details={"detail": str(exc)})
-
-    async def health_status_payload() -> HealthStatusResponse:
-        return HealthStatusResponse(
-            desktop=await desktop_health_payload(),
-            deepgram=await deepgram_health_payload(),
-            openclaw=await openclaw_health_payload(),
-        )
-
     def artifacts_overview_payload() -> ArtifactsOverviewResponse:
         jobs = runtime.jobs.list_jobs()
         return ArtifactsOverviewResponse(
@@ -239,10 +220,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=502)
         return JSONResponse(job.model_dump())
 
+    def active_docker_jobs_by_target() -> dict[str, JobResponse]:
+        return {
+            str(job.capture_target.get("id")): job
+            for job in runtime.jobs.active_jobs()
+            if job.capture_backend == "docker_desktop"
+        }
+
+    def active_job_fields_by_target(active_jobs: dict[str, JobResponse], target_id: object) -> dict[str, str | None]:
+        active_job = active_jobs.get(str(target_id))
+        return {
+            "active_job_id": active_job.id if active_job else None,
+            "active_job_state": active_job.state if active_job else None,
+        }
+
+    @app.get("/api/desktops")
+    async def list_desktops() -> JSONResponse:
+        active_job_by_target = active_docker_jobs_by_target()
+        desktops = [
+            desktop.model_copy(update=active_job_fields_by_target(active_job_by_target, desktop.target_id))
+            for desktop in runtime.desktop_sessions.list_sessions()
+        ]
+        payload = DesktopSessionsResponse(desktops=desktops)
+        return JSONResponse(payload.model_dump())
+
+    @app.post("/api/desktops")
+    async def create_desktop(payload: DesktopSessionCreateRequest) -> JSONResponse:
+        try:
+            desktop = runtime.desktop_sessions.create_session(payload.label)
+        except DesktopSessionLimitError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        except DesktopSessionError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=502)
+        return JSONResponse(desktop.model_dump())
+
+    @app.post("/api/desktops/{desktop_id}/destroy")
+    async def destroy_desktop(desktop_id: str) -> JSONResponse:
+        active_job_by_target = active_docker_jobs_by_target()
+        try:
+            desktop = next((session for session in runtime.desktop_sessions.list_sessions() if session.id == desktop_id), None)
+            if desktop is None:
+                raise DesktopSessionNotFoundError("isolated desktop not found")
+            if desktop.target_id in active_job_by_target:
+                return JSONResponse({"detail": "stop the recording before destroying this desktop"}, status_code=409)
+            destroyed = runtime.desktop_sessions.destroy_session(desktop_id)
+        except DesktopSessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return JSONResponse(destroyed.model_dump())
+
     @app.get("/api/capture/targets")
     async def capture_targets(backend: str) -> JSONResponse:
         active_job = runtime.jobs.active_job()
-        if active_job is not None and active_job.capture_backend == backend:
+        if active_job is not None and active_job.capture_backend == backend and backend != "docker_desktop":
             payload = CaptureTargetsResponse(backend=backend, targets=[active_job.capture_target])
             return JSONResponse(payload.model_dump())
 
@@ -251,7 +280,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="capture backend not found") from exc
         try:
-            payload = CaptureTargetsResponse(backend=backend, targets=await capture_backend.list_targets())
+            targets = await capture_backend.list_targets()
+            if backend == "docker_desktop":
+                active_job_by_target = active_docker_jobs_by_target()
+                targets = [
+                    target
+                    | {
+                        "available": str(target.get("id")) not in active_job_by_target,
+                    }
+                    | active_job_fields_by_target(active_job_by_target, target.get("id"))
+                    for target in targets
+                ]
+                return JSONResponse({"backend": backend, "targets": targets})
+            payload = CaptureTargetsResponse(backend=backend, targets=targets)
         except Exception as exc:
             return JSONResponse({"detail": str(exc)}, status_code=502)
         return JSONResponse(payload.model_dump())
@@ -447,28 +488,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/health")
     async def api_health() -> JSONResponse:
         return JSONResponse({"status": "ok"})
-
-    @app.get("/api/settings/health")
-    async def settings_health() -> JSONResponse:
-        return JSONResponse((await health_status_payload()).model_dump())
-
-    @app.get("/api/settings/test/deepgram")
-    async def deepgram_test() -> JSONResponse:
-        return JSONResponse((await deepgram_health_payload()).details)
-
-    @app.get("/api/settings/test/desktop")
-    async def desktop_test() -> JSONResponse:
-        try:
-            return JSONResponse(await runtime.desktop.health())
-        except RuntimeError as exc:
-            return JSONResponse({"detail": str(exc)}, status_code=502)
-
-    @app.get("/api/settings/test/openclaw")
-    async def openclaw_test() -> JSONResponse:
-        try:
-            return JSONResponse(await runtime.openclaw.health())
-        except Exception as exc:
-            return JSONResponse({"detail": str(exc)}, status_code=502)
 
     @app.get("/artifacts/{job_id}/{filename}")
     async def artifact_download(job_id: str, filename: str) -> FileResponse:

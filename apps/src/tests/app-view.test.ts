@@ -11,9 +11,13 @@ const navigationSource = readFileSync(join(testDir, "../components/navigation/Na
 const serviceStripSource = readFileSync(join(testDir, "../components/services/ServiceStrip.tsx"), "utf8");
 const captureSource = readFileSync(join(testDir, "../features/capture/StartCapturePanel.tsx"), "utf8");
 const captureTargetsSource = readFileSync(join(testDir, "../features/capture/captureTargets.ts"), "utf8");
+const desktopSessionsPath = join(testDir, "../features/capture/DesktopSessionsPanel.tsx");
+const desktopSessionsSource = existsSync(desktopSessionsPath) ? readFileSync(desktopSessionsPath, "utf8") : "";
 const permissionNoticeSource = readFileSync(join(testDir, "../features/capture/ScreenRecordingPermissionNotice.tsx"), "utf8");
 const jobDetailSource = readFileSync(join(testDir, "../features/jobs/JobDetail.tsx"), "utf8");
 const liveControlsSource = readFileSync(join(testDir, "../features/live/LiveCaptureControls.tsx"), "utf8");
+const liveJobSelectorPath = join(testDir, "../features/live/LiveJobSelector.tsx");
+const liveJobSelectorSource = existsSync(liveJobSelectorPath) ? readFileSync(liveJobSelectorPath, "utf8") : "";
 const liveTranscriptSource = readFileSync(join(testDir, "../features/live/LiveTranscript.tsx"), "utf8");
 const liveSummarySource = readFileSync(join(testDir, "../features/live/LiveSummaryPanel.tsx"), "utf8");
 const voiceNotesSource = readFileSync(join(testDir, "../features/voice-notes/VoiceNotesPanel.tsx"), "utf8");
@@ -25,6 +29,7 @@ const source = [
   serviceStripSource,
   captureSource,
   captureTargetsSource,
+  desktopSessionsSource,
   permissionNoticeSource,
   jobDetailSource,
   liveControlsSource,
@@ -62,18 +67,41 @@ function literalPattern(value: string) {
 test("shows the live view only when an active capture exists", () => {
   assert.match(navigationSource, /function Navigation\(\{ view, setView, liveAvailable \}/);
   assert.match(navigationSource, /liveAvailable \? \[\{ view: "live"(?: as const)?, label: "Live"/);
-  assert.match(appSource, /const visibleView = view === "live" && !activeJob \? "capture" : view/);
-  assert.match(appSource, /<Navigation setView=\{setView\} view=\{visibleView\} liveAvailable=\{Boolean\(activeJob\)\} \/>/);
-  assert.match(appSource, /\{visibleView === "live" && activeJob \? \(/);
+  assert.match(appSource, /const activeJobs = useMemo\(\(\) => jobs\.filter\(\(job\) => ACTIVE_STATES\.has\(job\.state\)\), \[jobs\]\);/);
+  assert.match(appSource, /const visibleView = view === "live" && activeJobs\.length === 0 \? "capture" : view/);
+  assert.match(appSource, /<Navigation setView=\{setView\} view=\{visibleView\} liveAvailable=\{activeJobs\.length > 0\} \/>/);
+  assert.match(appSource, /\{visibleView === "live" && liveJobListItem \? \(/);
 });
 
-test("live view follows the active capture instead of a stale selected job", () => {
-  assert.match(appSource, /const liveJob = selectedJob\?\.id === activeJob\?\.id \? selectedJob : null;/);
-  assert.match(appSource, /if \(visibleView !== "live" \|\| !activeJob \|\| selectedJob\?\.id === activeJob\.id\) \{/);
-  assert.match(appSource, /selectJob\(activeJob\.id\);/);
-  assert.match(appSource, /void loadSelectedJob\(activeJob\.id\);/);
+test("live view follows the selected active capture when multiple jobs run", () => {
+  assert.match(appSource, /const selectedActiveListJob = selectedJobId \? activeJobs\.find\(\(job\) => job\.id === selectedJobId\) \?\? null : null;/);
+  assert.match(appSource, /const selectedActiveJob = selectedJob && selectedJob\.id === selectedJobId && ACTIVE_STATES\.has\(selectedJob\.state\) \? selectedJob : null;/);
+  assert.match(appSource, /const liveJobListItem = selectedActiveListJob \?\? activeJobs\[0\] \?\? null;/);
+  assert.match(appSource, /const liveJob = selectedActiveJob\?\.id === liveJobListItem\?\.id \? selectedActiveJob : null;/);
+  assert.match(appSource, /if \(visibleView !== "live" \|\| !liveJobListItem \|\| selectedJobId === liveJobListItem\.id\) \{/);
+  assert.match(appSource, /selectJob\(liveJobListItem\.id\);/);
+  assert.match(appSource, /void loadSelectedJob\(liveJobListItem\.id\);/);
   assert.match(appSource, /<LiveTranscript job=\{liveJob\} \/>/);
-  assert.match(appSource, /<LiveSummaryPanel job=\{liveJob\} onSaved=\{\(\) => void loadSelectedJob\(activeJob\.id\)\} \/>/);
+  assert.match(appSource, /<LiveSummaryPanel job=\{liveJob\} onSaved=\{\(\) => liveJob \? void loadSelectedJob\(liveJob\.id\) : undefined\} \/>/);
+});
+
+test("live view lets users switch between active captures from the live tab", () => {
+  assert.match(appSource, /const selectedActiveListJob = selectedJobId \? activeJobs\.find\(\(job\) => job\.id === selectedJobId\) \?\? null : null;/);
+  assert.match(appSource, /function handleSelectLiveJob\(jobId: string\)/);
+  assert.match(appSource, /setSelectedJob\(null\);/);
+  assert.match(appSource, /setArtifacts\(\[\]\);/);
+  assert.match(appSource, /<LiveJobSelector/);
+  assert.match(appSource, /jobs=\{activeJobs\}/);
+  assert.match(appSource, /selectedJobId=\{liveJobListItem\.id\}/);
+  assert.match(appSource, /onSelect=\{handleSelectLiveJob\}/);
+  assert.match(liveJobSelectorSource, /export function LiveJobSelector/);
+  assert.match(liveJobSelectorSource, /jobs\.length <= 1/);
+  assert.match(liveJobSelectorSource, /Choose live capture/);
+  assert.match(liveJobSelectorSource, /<Select/);
+  assert.match(liveJobSelectorSource, /value=\{selectedJobId \?\? ""\}/);
+  assert.match(liveJobSelectorSource, /onChange=\{\(event\) => onSelect\(event\.target\.value\)\}/);
+  assert.match(liveJobSelectorSource, /jobs\.map\(\(job\) =>/);
+  assert.match(stylesSource, /\.live-job-switcher/);
 });
 
 test("shows in-app delete confirmation instead of relying on a hidden browser dialog", () => {
@@ -102,15 +130,17 @@ test("keeps refreshing a job after stop while the controller finishes in the bac
   assert.match(appSource, /await refreshStoppedJobUntilSettled\(jobId\);/);
 });
 
-test("settings can open the isolated desktop in the host browser", () => {
-  assert.match(serviceStripSource, /openIsolatedDesktop/);
-  assert.match(serviceStripSource, /report\.name === "Isolated desktop"/);
-  assert.match(serviceStripSource, /onClick=\{\(\) => void openIsolatedDesktop\(\)\}/);
-  assert.match(serviceStripSource, />\s*Open\s*</);
-  assert.match(servicesSource, /invoke\("open_isolated_desktop"\)/);
-  assert.match(tauriSource, /const ISOLATED_DESKTOP_URL: &str = "http:\/\/127\.0\.0\.1:3000\/";/);
-  assert.match(tauriSource, /fn open_isolated_desktop\(\)/);
-  assert.match(tauriSource, /arg\(ISOLATED_DESKTOP_URL\)/);
+test("created isolated desktops can be opened and destroyed from the capture workspace", () => {
+  assert.match(desktopSessionsSource, /function DesktopSessionsPanel/);
+  assert.match(desktopSessionsSource, /Create isolated desktop/);
+  assert.match(desktopSessionsSource, /openIsolatedDesktop\(desktop\.browser_url\)/);
+  assert.match(desktopSessionsSource, /destroyDesktop\(desktop\.id\)/);
+  assert.match(servicesSource, /openIsolatedDesktop\(browserUrl: string\)/);
+  assert.match(servicesSource, /invoke\("open_isolated_desktop", \{ browserUrl \}\)/);
+  assert.doesNotMatch(tauriSource, /const ISOLATED_DESKTOP_URL/);
+  assert.match(tauriSource, /fn open_isolated_desktop\(browser_url: String\) -> Result<\(\), String>/);
+  assert.match(tauriSource, /browser_url\.starts_with\("http:\/\/127\.0\.0\.1:"\)/);
+  assert.match(tauriSource, /\.arg\(browser_url\)/);
 });
 
 test("files reveal generated artifacts in Finder", () => {
@@ -160,13 +190,14 @@ test("newly created captures are selected and loaded before opening the live vie
   assert.ok(handlerSource.indexOf('setView("live")') > handlerSource.indexOf("await loadSelectedJob(job.id)"));
 });
 
-test("disables new captures while another capture is active", () => {
-  assert.match(captureSource, /activeCapture\?: JobResponse \| null/);
-  assert.match(appSource, /<StartCapturePanel activeCapture=\{activeJob\} onCreated=\{\(job\) => void handleCaptureCreated\(job\)\} \/>/);
-  assert.match(captureSource, /const activeCaptureMessage = "Stop the current session before starting a new one\."/);
-  assert.match(captureSource, /if \(activeCapture\) \{\s*setMessage\(activeCaptureMessage\);\s*return;\s*\}/);
-  assert.match(captureSource, /disabled=\{Boolean\(activeCapture\) \|\| busy \|\| \(backend === "macos_local" && !selectedTarget\)\}/);
-  assert.match(captureSource, /\{busy \? "Starting\.\.\." : activeCapture \? "Session running" : "Start capture"\}/);
+test("start capture allows parallel desktops but blocks unavailable targets", () => {
+  assert.match(captureSource, /activeCaptures\?: JobResponse\[\]/);
+  assert.match(appSource, /<StartCapturePanel[\s\S]*?activeCaptures=\{activeJobs\}[\s\S]*?onCreated=\{\(job\) => void handleCaptureCreated\(job\)\}/);
+  assert.match(captureSource, /const selectedTargetUnavailable = selectedTarget\?\.available === false;/);
+  assert.match(captureSource, /const macCaptureBlocked = backend === "macos_local" && activeCaptures\.length > 0;/);
+  assert.doesNotMatch(captureSource, /Stop the current session before starting a new one\./);
+  assert.match(captureSource, /disabled=\{busy \|\| selectedTargetUnavailable \|\| macCaptureBlocked \|\| \(backend === "macos_local" && !selectedTarget\) \|\| \(backend === "docker_desktop" && !selectedTarget\)\}/);
+  assert.match(captureSource, /\{busy \? "Starting\.\.\." : "Start capture"\}/);
 });
 
 test("local capture permission errors show a recovery panel", () => {
@@ -200,6 +231,44 @@ test("app-managed services wait for spawned ports before reporting startup", () 
   );
 });
 
+test("dashboard does not render system checks", () => {
+  const refreshStart = appSource.indexOf("async function refreshControllerData()");
+  const firstEffectStart = appSource.indexOf("useEffect(() => {", refreshStart);
+  const refreshSource = appSource.slice(refreshStart, firstEffectStart);
+  const bootStart = appSource.indexOf("async function boot()");
+  const bootEnd = appSource.indexOf("void boot();", bootStart);
+  const bootSource = appSource.slice(bootStart, bootEnd);
+
+  assert.doesNotMatch(appSource, /HealthPanel/);
+  assert.doesNotMatch(appSource, /getHealth/);
+  assert.doesNotMatch(appSource, /HealthStatusResponse/);
+  assert.doesNotMatch(appSource, /refreshHealth/);
+  assert.doesNotMatch(source, /System checks/);
+  assert.doesNotMatch(refreshSource, /Promise\.all\(\[getJobs\(\), getHealth\(\), getDesktops\(\)\]\)/);
+  assert.match(bootSource, /void refreshControllerData\(\);[\s\S]*?await startLocalServices\(\)/);
+});
+
+test("app runtime refresh only refreshes local service status", () => {
+  assert.doesNotMatch(appSource, /async function refreshRuntimeStatus\(\)/);
+  assert.match(appSource, /<ServiceStrip[\s\S]*?onRefresh=\{\(\) => void refreshStatus\(\)\}/);
+  assert.match(appSource, /<SettingsPanel[\s\S]*?onRefresh=\{\(\) => void refreshStatus\(\)\}/);
+});
+
+test("app-managed services reject stale controller APIs without desktop routes", () => {
+  assert.match(tauriSource, /fn controller_api_supports_desktops\(\) -> bool/);
+  assert.match(tauriSource, /local_http_status\(CONTROLLER_API_PORT, "\/api\/desktops", Duration::from_secs\(2\)\)/);
+  assert.match(tauriSource, /DESKTOP_SESSIONS_ROOT=\{\}/);
+  assert.match(tauriSource, /DESKTOP_SESSIONS_REGISTRY_PATH=\{\}/);
+
+  const controllerReconcileStart = tauriSource.indexOf("fn reconcile_controller_api");
+  const nextFunctionStart = tauriSource.indexOf("\nfn spawn_app_service", controllerReconcileStart);
+  const controllerReconcile = tauriSource.slice(controllerReconcileStart, nextFunctionStart);
+
+  assert.match(controllerReconcile, /port_open && !controller_api_supports_desktops\(\)/);
+  assert.match(controllerReconcile, /stop_child_service\(\s*runtime_root,\s*"controller-api",\s*&mut children\.controller_api,?\s*\)\?/);
+  assert.match(controllerReconcile, /does not support isolated desktops/);
+});
+
 test("app-owned macOS capture agent is not restarted just because screen access is blocked", () => {
   const macosReconcileStart = tauriSource.indexOf("fn reconcile_macos_capture_agent");
   const controllerReconcileStart = tauriSource.indexOf("fn reconcile_controller_api");
@@ -222,18 +291,16 @@ test("start session exposes recording and summary options", () => {
   assert.match(captureSource, /Screen record/);
   assert.match(captureSource, /Notify me about silence/);
   assert.match(captureSource, /const \[notifyOnInactivity, setNotifyOnInactivity\] = useState\(true\);/);
-  assert.match(captureSource, /const TEST_NOTIFICATION_DELAY_MS = 15 \* 1000;/);
-  assert.match(captureSource, /startSilenceNotificationMonitor/);
   assert.doesNotMatch(captureSource, /requestSilenceNotificationPermission/);
   assert.doesNotMatch(captureSource, /openNotificationSettings/);
   assert.doesNotMatch(captureSource, /Allow notifications/);
   assert.doesNotMatch(captureSource, /sendNativeNotification/);
-  assert.match(captureSource, /async function sendTestNotification\(\)/);
-  assert.match(captureSource, /test-alert-\$\{Date\.now\(\)\}/);
-  assert.match(captureSource, /timeoutMs: TEST_NOTIFICATION_DELAY_MS/);
-  assert.match(captureSource, /oneShot: true/);
-  assert.match(captureSource, /alert: \{\s*title: "Test silence alert",\s*body: "This is a 15-second test using the same silence alert timer\.",\s*\}/);
-  assert.match(captureSource, /Test alert scheduled\. It will appear in 15 seconds\./);
+  assert.doesNotMatch(captureSource, /const TEST_NOTIFICATION_DELAY_MS/);
+  assert.doesNotMatch(captureSource, /startSilenceNotificationMonitor/);
+  assert.doesNotMatch(captureSource, /async function sendTestNotification\(\)/);
+  assert.doesNotMatch(captureSource, /test-alert-\$\{Date\.now\(\)\}/);
+  assert.doesNotMatch(captureSource, /Test silence alert/);
+  assert.doesNotMatch(captureSource, />\s*Test alert\s*</);
   assert.match(captureSource, /silence_timeout_minutes: SILENCE_NOTIFICATION_TIMEOUT_MINUTES/);
   assert.match(captureSource, /const \[recordMicrophone, setRecordMicrophone\] = useState\(false\);/);
   assert.match(captureSource, /Record microphone/);
@@ -244,7 +311,6 @@ test("start session exposes recording and summary options", () => {
   assert.doesNotMatch(captureSource, /Google Chrome/);
   assert.match(captureSource, /mute_target_audio: canMuteTargetAudio && !recordMicrophone \? muteTargetAudio : false/);
   assert.match(captureSource, /notify_on_inactivity: notifyOnInactivity/);
-  assert.match(captureSource, />\s*Test alert\s*</);
   assert.match(captureSource, /Generate summary/);
   assert.match(captureSource, /record_screen: screenRecord/);
   assert.match(captureSource, /generate_summary: generateSummary/);
@@ -326,7 +392,7 @@ test("active captures start a native silence monitor outside the live view", () 
   assert.match(stylesSource, /top: 24px/);
   assert.match(stylesSource, /right: 24px/);
   assert.match(stylesSource, /\.silence-alert/);
-  assert.match(appSource, /useSilenceNotification\(activeJob,/);
+  assert.match(appSource, /useSilenceNotification\(activeJobs,/);
   assert.match(appSource, /async function handleCaptureCreated\(job: JobResponse\)/);
   assert.match(notificationSource, /SILENCE_NOTIFICATION_TIMEOUT_MINUTES = 2/);
   assert.match(notificationSource, /SILENCE_NOTIFICATION_TIMEOUT_MS = SILENCE_NOTIFICATION_TIMEOUT_MINUTES \* MINUTE_MS/);
@@ -347,13 +413,16 @@ test("active captures start a native silence monitor outside the live view", () 
   assert.doesNotMatch(notificationSource, /isPermissionGranted/);
   assert.doesNotMatch(notificationSource, /silenceNotificationIconUrl/);
   assert.match(notificationSource, /SILENCE_ALERT_START_FAILED_MESSAGE/);
-  assert.match(silenceHookSource, /notifyOnInactivityEnabled\(job\)/);
+  assert.match(silenceHookSource, /notifyOnInactivityEnabled\(activeJob\)/);
   assert.match(silenceHookSource, /function elapsedMsSince\(timestamp: string \| null\)/);
+  assert.match(silenceHookSource, /const activeJobs = Array\.isArray\(jobs\) \? jobs : jobs \? \[jobs\] : \[\];/);
+  assert.match(silenceHookSource, /for \(const activeJob of activeJobs\)/);
   assert.match(silenceHookSource, /const timeoutMs = silenceNotificationTimeoutMsForJob\(activeJob\)/);
   assert.match(
     silenceHookSource,
-    /startSilenceNotificationMonitor\(\{\s*jobId: activeJob\.id,\s*title: activeJob\.title,\s*timeoutMs,\s*elapsedMs: elapsedMsSince\(activeJob\.started_at \?\? activeJob\.created_at\),/,
+    /startSilenceNotificationMonitor\(\{\s*jobId: activeJob\.id,\s*title: silenceNotificationRecordingLabel\(activeJob\),\s*timeoutMs,\s*elapsedMs: elapsedMsSince\(activeJob\.started_at \?\? activeJob\.created_at\),/,
   );
+  assert.match(silenceHookSource, /silenceNotificationRecordingLabel/);
   assert.match(silenceHookSource, /isEmptyTranscriptResult\(event\)/);
   assert.match(silenceHookSource, /recordSilenceNotificationActivity\(activeJob\.id\)/);
   assert.match(silenceHookSource, /stopSilenceNotificationMonitor\(activeJob\.id\)/);

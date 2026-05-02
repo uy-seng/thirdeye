@@ -16,7 +16,7 @@ from capture_contracts.agent import FifoAudioFanout, status_payload
 from capture_contracts.contracts import default_docker_capture_target
 
 
-SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPT_DIR = Path(__file__).resolve().parents[2] / "scripts"
 
 
 def build_env(job_id: str, output_file: str | None = None) -> dict[str, str]:

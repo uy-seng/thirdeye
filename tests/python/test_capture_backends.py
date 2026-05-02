@@ -4,6 +4,12 @@ from jobs.models import JobCreate
 from jobs.state_machine import JobState
 
 
+def create_desktop_session(client, label: str = "Isolated desktop") -> dict[str, object]:
+    response = client.post("/api/desktops", json={"label": label})
+    assert response.status_code == 200
+    return response.json()
+
+
 def test_create_job_defaults_to_docker_desktop_capture_selection(settings) -> None:
     from api.main import create_runtime
 
@@ -113,11 +119,17 @@ def test_capture_targets_endpoint_lists_targets_for_requested_backend(client) ->
     docker_response = client.get("/api/capture/targets?backend=docker_desktop")
 
     assert docker_response.status_code == 200
+    assert docker_response.json() == {"backend": "docker_desktop", "targets": []}
+
+    desktop = create_desktop_session(client)
+    docker_response = client.get("/api/capture/targets?backend=docker_desktop")
+
+    assert docker_response.status_code == 200
     assert docker_response.json() == {
         "backend": "docker_desktop",
         "targets": [
             {
-                "id": "desktop",
+                "id": desktop["target_id"],
                 "kind": "desktop",
                 "label": "Isolated desktop",
                 "app_bundle_id": None,
@@ -125,6 +137,10 @@ def test_capture_targets_endpoint_lists_targets_for_requested_backend(client) ->
                 "app_pid": None,
                 "window_id": None,
                 "display_id": None,
+                "browser_url": desktop["browser_url"],
+                "available": True,
+                "active_job_id": None,
+                "active_job_state": None,
             }
         ],
     }

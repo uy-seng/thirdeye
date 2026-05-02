@@ -5,7 +5,8 @@ import type {
   CaptureBackend,
   CaptureTarget,
   CaptureTargetsResponse,
-  HealthStatusResponse,
+  DesktopSession,
+  DesktopSessionsResponse,
   JobDetailResponse,
   JobResponse,
   TranscriptSummaryGenerateResponse,
@@ -114,10 +115,6 @@ export function getJob(jobId: string) {
   return apiJson<JobDetailResponse>(`/api/jobs/${jobId}`);
 }
 
-export function getHealth() {
-  return apiJson<HealthStatusResponse>("/api/settings/health");
-}
-
 export function getArtifactsOverview() {
   return apiJson<ArtifactsOverviewResponse>("/api/artifacts");
 }
@@ -149,6 +146,21 @@ export function generateVoiceNoteSummary(payload: { title: string; transcript: s
 
 export function getCaptureTargets(backend: CaptureBackend) {
   return apiJson<CaptureTargetsResponse>(`/api/capture/targets?backend=${backend}`);
+}
+
+export function getDesktops() {
+  return apiJson<DesktopSessionsResponse>("/api/desktops");
+}
+
+export function createDesktop(label: string) {
+  return apiJson<DesktopSession>("/api/desktops", {
+    method: "POST",
+    body: JSON.stringify({ label }),
+  });
+}
+
+export function destroyDesktop(desktopId: string) {
+  return apiJson<DesktopSession>(`/api/desktops/${desktopId}/destroy`, { method: "POST" });
 }
 
 export function startCapture(payload: {

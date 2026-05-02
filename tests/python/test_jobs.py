@@ -32,6 +32,12 @@ def wait_for_metadata_value(client, job_id: str, key: str, target: str, timeout:
     raise AssertionError(f"job {job_id} metadata {key} never reached {target}")
 
 
+def create_desktop_session(client, label: str = "Test desktop") -> dict[str, object]:
+    response = client.post("/api/desktops", json={"label": label})
+    assert response.status_code == 200
+    return response.json()
+
+
 def test_cleanup_job_removes_artifacts_and_recordings_but_keeps_job(client) -> None:
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Cleanup Candidate"))
@@ -75,6 +81,7 @@ def test_delete_job_removes_job_record_transitions_and_files(client) -> None:
 
 
 def test_start_job_rejects_second_active_capture(client) -> None:
+    create_desktop_session(client)
 
     first = client.post(
         "/api/jobs/start",
@@ -101,6 +108,7 @@ def test_start_job_rejects_unknown_payload_fields(client) -> None:
 
 def test_start_job_failure_marks_job_failed_and_allows_retry(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
+    create_desktop_session(client)
     original_start_live_audio = runtime.capture.desktop_client.start_live_audio
 
     async def fail_start_live_audio(
@@ -135,6 +143,7 @@ def test_start_job_failure_marks_job_failed_and_allows_retry(client, monkeypatch
 
 
 def test_live_websocket_rebroadcasts_and_stop_finalizes_artifacts(client) -> None:
+    create_desktop_session(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
     job_id = start.json()["id"]
@@ -168,6 +177,7 @@ def test_live_websocket_rebroadcasts_and_stop_finalizes_artifacts(client) -> Non
 
 def test_start_job_can_skip_screen_recording_while_keeping_transcript_and_summary(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
+    create_desktop_session(client)
     backend = runtime.capture.capture_backends.require("docker_desktop")
 
     async def unexpected_start_recording(job_id: str, output_file: str, target: dict[str, object]) -> dict[str, object]:
@@ -648,6 +658,7 @@ def test_record_microphone_endpoint_rejects_unsupported_backend_and_muted_app_au
 
 
 def test_stop_endpoint_accepts_active_job(client) -> None:
+    create_desktop_session(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
     job_id = start.json()["id"]
@@ -719,6 +730,7 @@ def test_summary_rerun_endpoint_tracks_controlled_error(client, monkeypatch) -> 
 
 def test_stop_summary_failure_keeps_job_completed_and_tracks_recap_error(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
+    create_desktop_session(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
     job_id = start.json()["id"]
@@ -791,6 +803,7 @@ def test_recover_route_resumes_recovering_job_and_completes(client, monkeypatch)
 
 def test_stop_uses_transcript_prompts_for_canonical_summary(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
+    create_desktop_session(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
     job_id = start.json()["id"]
@@ -816,6 +829,7 @@ def test_stop_uses_transcript_prompts_for_canonical_summary(client, monkeypatch)
 
 def test_stop_can_skip_canonical_summary_generation(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
+    create_desktop_session(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
     job_id = start.json()["id"]
@@ -848,6 +862,7 @@ def test_stop_can_skip_canonical_summary_generation(client, monkeypatch) -> None
 
 def test_start_job_can_disable_final_summary_generation(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
+    create_desktop_session(client)
     start = client.post(
         "/api/jobs/start",
         json={"title": "Transcript only", "generate_summary": False},
@@ -880,6 +895,7 @@ def test_start_job_can_disable_final_summary_generation(client, monkeypatch) -> 
 
 def test_duplicate_stop_requests_reuse_existing_background_run(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
+    create_desktop_session(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
     job_id = start.json()["id"]
@@ -906,6 +922,7 @@ def test_duplicate_stop_requests_reuse_existing_background_run(client, monkeypat
 
 def test_stop_keeps_job_active_until_summary_finishes(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
+    create_desktop_session(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})
     assert start.status_code == 200
     job_id = start.json()["id"]

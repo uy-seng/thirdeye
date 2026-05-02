@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from thirdeye_desktop_agent import main as agent_main
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class StubFanout:
@@ -132,3 +136,8 @@ def test_build_env_uses_container_recordings_mount_for_host_output_file(monkeypa
     )
 
     assert env["OUTPUT_DIR"] == "/recordings"
+
+
+def test_agent_resolves_scripts_from_packaged_desktop_agent_scripts_dir() -> None:
+    assert agent_main.SCRIPT_DIR == ROOT / "services" / "desktop-agent" / "scripts"
+    assert (agent_main.SCRIPT_DIR / "prepare_pulse_runtime.sh").is_file()

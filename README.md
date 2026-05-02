@@ -51,12 +51,12 @@ The application is built using the following technologies:
 - **thirdeye.app**: macOS app and main user interface, built with Tauri.
 - **macos-capture-agent**: FastAPI agent on `127.0.0.1:8791` for local macOS displays, applications, and windows.
 - **controller-api**: FastAPI service on `127.0.0.1:8788` for job lifecycle, Deepgram relay, transcript rebroadcast, summaries, artifacts, and recovery.
-- **desktop**: optional Dockerized Chromium desktop with KasmVNC on `127.0.0.1:3000`, a desktop control API on `127.0.0.1:8790`, and the `ffmpeg` capture scripts. The desktop web UI is loopback-only and does not require a thirdeye login.
+- **desktop**: optional on-demand Dockerized Chromium desktops with KasmVNC, a desktop control API, and the `ffmpeg` capture scripts. Each desktop is created only when requested and binds loopback-only dynamic ports.
 - **openclaw**: optional Docker helper on `127.0.0.1:18789` that act as a gateway for LLM calls.
 
 Recording and live transcription are decoupled:
 
-- Pipeline A records the X11 display and Pulse monitor to MP4 inside `desktop`.
+- Pipeline A records the X11 display and Pulse monitor to MP4 inside the selected on-demand desktop.
 - Pipeline A can alternatively record a macOS display, application, or window through ScreenCaptureKit via `macos-capture-agent`.
 - Pipeline B captures monitor audio, converts it to `16k` mono PCM, and streams it to Deepgram from `controller-api`.
 
@@ -66,7 +66,7 @@ Install these on the host machine before starting setup:
 
 | Prerequisite | Why it is needed | Notes |
 | --- | --- | --- |
-| Docker Desktop or Docker Engine with Compose v2 | Runs the optional isolated desktop and optional OpenClaw gateway | `docker compose` must be available only if you use those features |
+| Docker Desktop or Docker Engine | Runs on-demand isolated desktops and optional OpenClaw helpers | Docker is required only if you use those features |
 | GNU Make | Wraps the common build and run commands | Used by the repo `Makefile` |
 | Bash-compatible shell | Required by the repo scripts |  |
 | Python 3.12+ | Creates the repository `.venv` and runs the local FastAPI services | Python 3.14 is recommended for local development |
@@ -74,7 +74,7 @@ Install these on the host machine before starting setup:
 | npm | Installs frontend dependencies | Ships with Node.js |
 | Rust toolchain | Builds the macOS app shell | Required for `make macos-app-dev` and `make macos-app-build` |
 | Xcode command line tools | Builds Swift and macOS app components | Required for ScreenCaptureKit helper builds |
-| Localhost ports | Exposes the local services | `8788`, `8791`, optionally `3000`, `8790`, and `18789` |
+| Localhost ports | Exposes the local services | `8788`, `8791`, optional on-demand desktop ports, and `18789` |
 
 ## Requirements
 
@@ -220,16 +220,9 @@ Use this section when you want to run individual services from the terminal inst
 make build
 ```
 
-### 2. Optional: start the isolated desktop
+### 2. Optional: use isolated desktops
 
-```bash
-make up
-```
-
-This starts:
-
-- `desktop` on `127.0.0.1:3000`
-- desktop control API on `127.0.0.1:8790`
+You do not need to pre-start an isolated desktop. Start the app and click `Create isolated desktop` in the capture workspace. The controller starts a Docker desktop only when you ask for one, assigns loopback-only ports, and lets you destroy it when you are done.
 
 ### 3. Start the optional OpenClaw helper
 
@@ -294,8 +287,7 @@ Once the stack is up:
 
 - Controller API: [http://127.0.0.1:8788](http://127.0.0.1:8788)
 - Controller API docs: [http://127.0.0.1:8788/docs](http://127.0.0.1:8788/docs)
-- Isolated desktop: [http://127.0.0.1:3000](http://127.0.0.1:3000)
-- Desktop agent health: [http://127.0.0.1:8790/health](http://127.0.0.1:8790/health)
+- On-demand isolated desktops: use the `Open` button after creating a desktop in the app
 - macOS capture agent health: [http://127.0.0.1:8791/health](http://127.0.0.1:8791/health)
 - Optional OpenClaw health: [http://127.0.0.1:18789/healthz](http://127.0.0.1:18789/healthz)
 
@@ -305,8 +297,7 @@ Once the stack is up:
 
 ```bash
 curl -fsS http://127.0.0.1:8788/api/health
-curl -fsS http://127.0.0.1:8790/health
-curl -fsS http://127.0.0.1:8788/api/settings/test/desktop
+curl -fsS http://127.0.0.1:8788/api/desktops
 curl -fsS http://127.0.0.1:8791/health
 ```
 
@@ -314,12 +305,11 @@ If OpenClaw is enabled:
 
 ```bash
 curl -fsS http://127.0.0.1:18789/healthz
-curl -fsS http://127.0.0.1:8788/api/settings/test/openclaw
 ```
 
 ### Smoke test
 
-After the app-managed services and optional desktop are running:
+After the app-managed services are running:
 
 ```bash
 make smoke
@@ -328,18 +318,14 @@ make smoke
 The smoke test checks:
 
 - controller API health
-- desktop agent health
-- desktop UI reachability
-- controller settings health
-- desktop integration
-- Deepgram integration
-- optional OpenClaw integration when enabled
+- desktop session API reachability
+- optional OpenClaw health when enabled
 
 ## Choosing A Capture Target
 
 The start form now supports two capture surfaces:
 
-- `Isolated desktop`: the original Docker desktop workflow.
+- `Isolated desktop`: an on-demand Docker desktop created from the capture workspace.
 - `This Mac`: local macOS capture through ScreenCaptureKit.
 
 When `This Mac` is selected, the controller loads grouped targets from `macos-capture-agent`:
@@ -364,12 +350,6 @@ Optional, when you are running the services manually and need `This Mac` capture
 
 ```bash
 make macos-capture-up
-```
-
-Optional, when you need the isolated Docker desktop:
-
-```bash
-make up
 ```
 
 Optional:
@@ -403,7 +383,7 @@ make test-all
 
 1. Open `thirdeye.app`.
 2. Click `Start Capture`.
-3. Choose `This Mac` for a local screen, app, or window, or choose `Isolated desktop` if you started the optional Docker desktop.
+3. Choose `This Mac` for a local screen, app, or window, or create and choose an `Isolated desktop`.
 4. Start playback yourself if needed.
 5. The controller starts recording and the Deepgram relay in parallel.
 6. Monitor the live transcript in the app.
@@ -414,7 +394,7 @@ The command-line development workflow stores state in the repo:
 
 | Path | Contents |
 | --- | --- |
-| `runtime/desktop-config/` | Desktop container config |
+| `runtime/desktop-sessions/` | On-demand desktop session registry and per-desktop config |
 | `runtime/recordings/` | Shared recording output |
 | `runtime/artifacts/jobs/<job_id>/` | Final job artifacts |
 | `runtime/controller/controller.db` | SQLite controller database |

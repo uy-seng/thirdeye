@@ -17,14 +17,15 @@ class RecoveryService:
         restarted_relays: list[str] = []
         resumed_jobs: list[str] = []
         failed_jobs: list[str] = []
-        backend_statuses: dict[str, dict[str, object]] = {}
+        backend_statuses: dict[tuple[str, str], dict[str, object]] = {}
         for job in self.jobs.list_jobs():
             state = JobState(job.state)
             if state == JobState.LIVE_STREAMING:
-                status = backend_statuses.get(job.capture_backend)
+                status_key = (job.capture_backend, str(job.capture_target.get("id")))
+                status = backend_statuses.get(status_key)
                 if status is None:
-                    status = await self.capture_backends.require(job.capture_backend).status()
-                    backend_statuses[job.capture_backend] = status
+                    status = await self.capture_backends.require(job.capture_backend).status(job.capture_target)
+                    backend_statuses[status_key] = status
                 recording_running = bool((status.get("recording") or {}).get("running"))
                 live_audio_running = bool((status.get("live_audio") or {}).get("running"))
                 if recording_running and live_audio_running:

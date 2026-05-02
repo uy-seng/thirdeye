@@ -17,11 +17,12 @@ The source-built macOS app talks directly to `controller-api` on `127.0.0.1:8788
 - `GET /api/jobs/{job_id}/artifacts`
 - `GET /api/jobs/{job_id}/live/stream`
 - `GET /api/artifacts`
+- `GET /api/desktops`
+- `POST /api/desktops`
+- `POST /api/desktops/{desktop_id}/destroy`
 - `GET /api/capture/targets?backend={docker_desktop|macos_local}`
 - `WS /ws/jobs/{job_id}/live`
 - `GET /api/health`
-- `GET /api/settings/health`
-- `GET /api/settings/test/{deepgram|openclaw|desktop}`
 - `GET /artifacts/{job_id}/{filename}`
 
 ## Capture Agent API

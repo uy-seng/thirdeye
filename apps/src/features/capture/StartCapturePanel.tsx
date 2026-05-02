@@ -1,22 +1,20 @@
-import { Bell } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { Button, Card, Select, TextInput } from "../../components/ui";
 import { getCaptureTargets, startCapture } from "../../lib/api";
+import { desktopCaptureBusyLabel } from "../../lib/job-state";
 import { SILENCE_NOTIFICATION_TIMEOUT_MINUTES } from "../../lib/silence-notifications";
-import { startSilenceNotificationMonitor } from "../../lib/services";
 import type { CaptureBackend, CaptureTarget, JobResponse } from "../../lib/types";
 import { ScreenRecordingPermissionNotice } from "./ScreenRecordingPermissionNotice";
 import { isScreenRecordingPermissionError, targetGroups, targetLabel } from "./captureTargets";
 
 type StartCapturePanelProps = {
-  activeCapture?: JobResponse | null;
+  activeCaptures?: JobResponse[];
   onCreated: (job: JobResponse) => void;
+  targetRefreshSignal?: unknown;
 };
 
-const TEST_NOTIFICATION_DELAY_MS = 15 * 1000;
-
-export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapturePanelProps) {
+export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefreshSignal = null }: StartCapturePanelProps) {
   const [title, setTitle] = useState("Authorized session");
   const [backend, setBackend] = useState<CaptureBackend>("macos_local");
   const [targets, setTargets] = useState<CaptureTarget[]>([]);
@@ -33,7 +31,8 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
   const canRecordMicrophone = backend === "macos_local";
   const canMuteTargetAudio =
     backend === "macos_local" && !recordMicrophone && Boolean(selectedTarget && ["application", "window"].includes(selectedTarget.kind));
-  const activeCaptureMessage = "Stop the current session before starting a new one.";
+  const selectedTargetUnavailable = selectedTarget?.available === false;
+  const macCaptureBlocked = backend === "macos_local" && activeCaptures.length > 0;
   const muteTargetHelp = "This mutes the selected app while capture runs. The transcript and recording still receive audio.";
   const muteTargetDisabledHelp = recordMicrophone
     ? "Turn off microphone recording to use silent app capture."
@@ -41,28 +40,23 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
 
   async function loadTargets(nextBackend = backend) {
     setMessage("");
-    if (nextBackend === "docker_desktop") {
-      setTargets([]);
-      setTargetId("");
-      return;
-    }
     try {
       const payload = await getCaptureTargets(nextBackend);
       setTargets(payload.targets);
       setTargetId((current) => (payload.targets.some((target) => target.id === current) ? current : payload.targets[0]?.id ?? ""));
       if (payload.targets.length === 0) {
-        setMessage("No local displays or windows are available yet.");
+        setMessage(nextBackend === "docker_desktop" ? "Create an isolated desktop before starting." : "No local displays or windows are available yet.");
       }
     } catch (error) {
       setTargets([]);
       setTargetId("");
-      setMessage(error instanceof Error ? error.message : "Unable to load capture targets.");
+      setMessage(error instanceof Error ? error.message : "Unable to load capture options.");
     }
   }
 
   useEffect(() => {
     void loadTargets(backend);
-  }, [backend]);
+  }, [backend, targetRefreshSignal]);
 
   useEffect(() => {
     if (!canMuteTargetAudio) {
@@ -76,33 +70,22 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
     }
   }, [canRecordMicrophone]);
 
-  async function sendTestNotification() {
-    setMessage("");
-    try {
-      await startSilenceNotificationMonitor({
-        jobId: `test-alert-${Date.now()}`,
-        title: "Test alert",
-        timeoutMs: TEST_NOTIFICATION_DELAY_MS,
-        alert: {
-          title: "Test silence alert",
-          body: "This is a 15-second test using the same silence alert timer.",
-        },
-        oneShot: true,
-      });
-      setMessage("Test alert scheduled. It will appear in 15 seconds.");
-    } catch {
-      setMessage("Unable to schedule the test alert.");
-    }
-  }
-
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (activeCapture) {
-      setMessage(activeCaptureMessage);
+    if (selectedTargetUnavailable) {
+      setMessage("Choose an available isolated desktop.");
+      return;
+    }
+    if (macCaptureBlocked) {
+      setMessage("Stop active captures before recording this Mac.");
       return;
     }
     if (backend === "macos_local" && !selectedTarget) {
       setMessage("Choose what to capture before starting.");
+      return;
+    }
+    if (backend === "docker_desktop" && !selectedTarget) {
+      setMessage("Create an isolated desktop before starting.");
       return;
     }
     setBusy(true);
@@ -160,6 +143,18 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
             </Select>
           </label>
         ) : null}
+        {backend === "docker_desktop" ? (
+          <label>
+            Isolated desktop
+            <Select disabled={targets.length === 0} onChange={(event) => setTargetId(event.target.value)} value={targetId}>
+              {targets.map((target) => (
+                <option disabled={target.available === false} key={target.id} value={target.id}>
+                  {target.available === false ? `${targetLabel(target)} (${desktopCaptureBusyLabel(target.active_job_state)})` : targetLabel(target)}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : null}
         <div className="capture-options" aria-label="Session options">
           <label className="option-row">
             <input checked={screenRecord} onChange={(event) => setScreenRecord(event.target.checked)} type="checkbox" />
@@ -208,21 +203,18 @@ export function StartCapturePanel({ activeCapture = null, onCreated }: StartCapt
           </label>
         </div>
         <div className="toolbar">
-          <Button disabled={Boolean(activeCapture) || busy || (backend === "macos_local" && !selectedTarget)} type="submit">
-            {busy ? "Starting..." : activeCapture ? "Session running" : "Start capture"}
+          <Button
+            disabled={busy || selectedTargetUnavailable || macCaptureBlocked || (backend === "macos_local" && !selectedTarget) || (backend === "docker_desktop" && !selectedTarget)}
+            type="submit"
+          >
+            {busy ? "Starting..." : "Start capture"}
           </Button>
           <Button onClick={() => void loadTargets()} type="button" variant="secondary">
             Refresh targets
           </Button>
-          <Button onClick={() => void sendTestNotification()} type="button" variant="secondary">
-            <Bell aria-hidden="true" size={16} />
-            Test alert
-          </Button>
         </div>
         {permissionBlocked ? (
           <ScreenRecordingPermissionNotice />
-        ) : activeCapture ? (
-          <p className="form-message">{activeCaptureMessage}</p>
         ) : message ? (
           <p className="form-message">{message}</p>
         ) : null}

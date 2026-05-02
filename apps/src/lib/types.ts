@@ -27,6 +27,10 @@ export type CaptureTarget = {
   app_pid: number | null;
   window_id: string | null;
   display_id: string | null;
+  browser_url?: string | null;
+  available?: boolean | null;
+  active_job_id?: string | null;
+  active_job_state?: string | null;
 };
 
 export type CaptureTargetsResponse = {
@@ -34,16 +38,23 @@ export type CaptureTargetsResponse = {
   targets: CaptureTarget[];
 };
 
-export type HealthCheckResult = {
-  ok: boolean;
-  status: string;
-  details: Record<string, unknown>;
+export type DesktopSession = {
+  id: string;
+  target_id: string;
+  label: string;
+  container_id: string | null;
+  container_name: string;
+  browser_url: string;
+  agent_url: string;
+  status: "starting" | "ready" | "stopped" | "destroyed" | "error";
+  created_at: string;
+  active_job_id: string | null;
+  active_job_state: string | null;
+  error_message: string | null;
 };
 
-export type HealthStatusResponse = {
-  desktop: HealthCheckResult;
-  deepgram: HealthCheckResult;
-  openclaw: HealthCheckResult;
+export type DesktopSessionsResponse = {
+  desktops: DesktopSession[];
 };
 
 export type ArtifactFile = {

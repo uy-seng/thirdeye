@@ -27,7 +27,6 @@ help:
 	@printf '  make doctor                Check local tool and runtime readiness\n'
 	@printf '  make services-start        Start app-managed local services\n'
 	@printf '  make services-status       Show app-managed local service status\n'
-	@printf '  make up                    Start Docker services\n'
 	@printf '  make dev-api               Start the local controller API\n'
 	@printf '  make macos-capture-up      Start This Mac capture targets in the background\n'
 	@printf '  make macos-capture-status  Check the This Mac capture agent\n'
@@ -114,9 +113,8 @@ macos-app-test:
 
 dev-local:
 	@printf 'Local dev startup:\n'
-	@printf '  1. make up\n'
-	@printf '  2. make macos-capture-up      # optional, enables This Mac targets\n'
-	@printf '  3. make dev-api               # keep running in its own terminal\n'
+	@printf '  1. make macos-capture-up      # optional, enables This Mac targets\n'
+	@printf '  2. make dev-api               # keep running in its own terminal\n'
 	@printf '\n'
 	@printf 'Useful checks:\n'
 	@printf '  make macos-capture-status\n'
@@ -124,5 +122,5 @@ dev-local:
 	@printf '  make macos-capture-permissions\n'
 
 dev-api:
-	mkdir -p "$(RUNTIME_ROOT)/desktop-config" "$(RUNTIME_ROOT)/recordings" "$(RUNTIME_ROOT)/artifacts" "$(RUNTIME_ROOT)/controller" "$(RUNTIME_ROOT)/controller-events"
-	set -a; [ ! -f .env ] || . ./.env; set +a; PYTHONPATH="$(PYTHONPATH_DIRS)" CONTROLLER_BASE_URL=http://127.0.0.1:8788 DESKTOP_BASE_URL=$${LOCAL_DESKTOP_BASE_URL:-http://127.0.0.1:8790} OPENCLAW_BASE_URL=$${LOCAL_OPENCLAW_BASE_URL:-http://127.0.0.1:18789} CONTROLLER_DB_PATH=$${CONTROLLER_DB_PATH:-$(RUNTIME_ROOT)/controller/controller.db} ARTIFACTS_ROOT=$${ARTIFACTS_ROOT:-$(RUNTIME_ROOT)/artifacts} RECORDINGS_ROOT=$${RECORDINGS_ROOT:-$(RUNTIME_ROOT)/recordings} CONTROLLER_EVENTS_ROOT=$${CONTROLLER_EVENTS_ROOT:-$(RUNTIME_ROOT)/controller-events} .venv/bin/uvicorn api.main:create_app --factory --host 127.0.0.1 --port 8788
+	mkdir -p "$(RUNTIME_ROOT)/desktop-sessions" "$(RUNTIME_ROOT)/recordings" "$(RUNTIME_ROOT)/artifacts" "$(RUNTIME_ROOT)/controller" "$(RUNTIME_ROOT)/controller-events"
+	set -a; [ ! -f .env ] || . ./.env; set +a; PYTHONPATH="$(PYTHONPATH_DIRS)" CONTROLLER_BASE_URL=http://127.0.0.1:8788 OPENCLAW_BASE_URL=$${LOCAL_OPENCLAW_BASE_URL:-http://127.0.0.1:18789} CONTROLLER_DB_PATH=$${CONTROLLER_DB_PATH:-$(RUNTIME_ROOT)/controller/controller.db} ARTIFACTS_ROOT=$${ARTIFACTS_ROOT:-$(RUNTIME_ROOT)/artifacts} RECORDINGS_ROOT=$${RECORDINGS_ROOT:-$(RUNTIME_ROOT)/recordings} CONTROLLER_EVENTS_ROOT=$${CONTROLLER_EVENTS_ROOT:-$(RUNTIME_ROOT)/controller-events} DESKTOP_SESSIONS_ROOT=$${DESKTOP_SESSIONS_ROOT:-$(RUNTIME_ROOT)/desktop-sessions} DESKTOP_SESSIONS_REGISTRY_PATH=$${DESKTOP_SESSIONS_REGISTRY_PATH:-$(RUNTIME_ROOT)/desktop-sessions/sessions.json} .venv/bin/uvicorn api.main:create_app --factory --host 127.0.0.1 --port 8788

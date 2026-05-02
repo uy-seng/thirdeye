@@ -276,6 +276,46 @@ label {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.desktop-create-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.desktop-session-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.desktop-session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #111111;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.desktop-session-row span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.desktop-session-row small {
+  overflow: hidden;
+  color: #6b6b6b;
+  font-size: 0.78rem;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .option-row {
   display: flex;
   min-height: 72px;
@@ -335,6 +375,10 @@ label {
 
 .notice {
   margin-bottom: 16px;
+}
+
+.health-empty {
+  margin-top: 18px;
 }
 
 .silence-alert-region {
@@ -444,6 +488,33 @@ label {
   display: grid;
   gap: 14px;
   margin-bottom: 16px;
+}
+
+.live-job-switcher {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  border: 1px solid #111111;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+.live-job-field {
+  flex: 1;
+  min-width: 260px;
+}
+
+.live-job-field span {
+  color: #242424;
+  font-size: 0.86rem;
+  font-weight: 720;
+}
+
+.live-job-switcher .badge {
+  margin-bottom: 8px;
 }
 
 .live-control-row {

@@ -5,10 +5,13 @@ from dataclasses import dataclass
 from capture.desktop_exec import (
     CaptureClientProtocol,
     DesktopHttpClient,
+    DesktopPoolHttpClient,
     FakeDesktopClient,
+    FakeDesktopPoolClient,
     FakeMacOSCaptureClient,
     MacOSCaptureHttpClient,
 )
+from capture.desktop_sessions import DesktopSessionManager
 from core.settings import Settings
 
 
@@ -23,18 +26,18 @@ class CaptureBackendRegistry:
             raise KeyError("capture backend not found") from exc
 
 
-def build_capture_backends(settings: Settings) -> CaptureBackendRegistry:
+def build_capture_backends(settings: Settings, desktop_sessions: DesktopSessionManager) -> CaptureBackendRegistry:
     if settings.fake_mode:
         return CaptureBackendRegistry(
             {
-                "docker_desktop": FakeDesktopClient(settings),
+                "docker_desktop": FakeDesktopPoolClient(settings, desktop_sessions),
                 "macos_local": FakeMacOSCaptureClient(settings),
             }
         )
 
     return CaptureBackendRegistry(
         {
-            "docker_desktop": DesktopHttpClient(settings),
+            "docker_desktop": DesktopPoolHttpClient(settings, desktop_sessions),
             "macos_local": MacOSCaptureHttpClient(settings),
         }
     )

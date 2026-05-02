@@ -5,8 +5,6 @@ use std::process::Command;
 
 const SCREEN_RECORDING_SETTINGS_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
-const ISOLATED_DESKTOP_URL: &str = "http://127.0.0.1:3000/";
-
 #[tauri::command]
 pub(crate) fn open_screen_recording_settings() -> Result<(), String> {
     Command::new("open")
@@ -29,9 +27,12 @@ pub(crate) fn open_logs_folder() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub(crate) fn open_isolated_desktop() -> Result<(), String> {
+pub(crate) fn open_isolated_desktop(browser_url: String) -> Result<(), String> {
+    if !browser_url.starts_with("http://127.0.0.1:") {
+        return Err("Only local isolated desktops can be opened.".to_string());
+    }
     Command::new("open")
-        .arg(ISOLATED_DESKTOP_URL)
+        .arg(browser_url)
         .status()
         .map_err(|error| format!("Unable to open isolated desktop: {error}"))?;
     Ok(())

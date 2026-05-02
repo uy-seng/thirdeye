@@ -1,6 +1,5 @@
-import { ExternalLink, Play, RefreshCw, Square } from "lucide-react";
+import { Play, RefreshCw, Square } from "lucide-react";
 
-import { openIsolatedDesktop } from "../../lib/services";
 import type { ServiceStatus } from "../../lib/types";
 import { Badge, Button, Card } from "../ui";
 
@@ -32,22 +31,13 @@ export function ServiceStrip({ status, onRefresh, onStart, onStop }: { status: S
         </div>
       </div>
       <div className="service-grid">
-        {(status?.reports ?? []).map((report) => {
-          const isIsolatedDesktop = report.name === "Isolated desktop";
-          return (
-            <div className="service-row" key={report.name}>
-              <span>{report.name}</span>
-              <Badge tone={serviceTone(report.running)}>{report.running ? "Running" : "Stopped"}</Badge>
-              <small>{report.detail}</small>
-              {isIsolatedDesktop ? (
-                <Button className="service-row-action" onClick={() => void openIsolatedDesktop()} type="button" variant="secondary">
-                  <ExternalLink aria-hidden="true" size={15} />
-                  Open
-                </Button>
-              ) : null}
-            </div>
-          );
-        })}
+        {(status?.reports ?? []).map((report) => (
+          <div className="service-row" key={report.name}>
+            <span>{report.name}</span>
+            <Badge tone={serviceTone(report.running)}>{report.running ? "Running" : "Stopped"}</Badge>
+            <small>{report.detail}</small>
+          </div>
+        ))}
       </div>
     </Card>
   );

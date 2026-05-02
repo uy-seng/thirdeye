@@ -6,9 +6,12 @@ import {
   apiJson,
   apiUrl,
   artifactHref,
+  createDesktop,
   deleteJob,
+  destroyDesktop,
   generateTranscriptSummary,
   generateVoiceNoteSummary,
+  getDesktops,
   getJobs,
   saveTranscriptSummary,
   setRecordMicrophoneEnabled,
@@ -85,6 +88,53 @@ test("apiJson explains local service connection failures", async () => {
       () => apiJson("/api/jobs/start", { method: "POST", body: JSON.stringify({ title: "Capture" }) }),
       /Could not connect to the local app service\. Restart the app and try again\./,
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("desktop session APIs create, list, and destroy isolated desktops", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    if (String(input).endsWith("/api/desktops") && init?.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          id: "desktop-1",
+          target_id: "desktop:desktop-1",
+          label: "Interview room",
+          container_id: "container-1",
+          container_name: "thirdeye-desktop-desktop-1",
+          browser_url: "http://127.0.0.1:3002",
+          agent_url: "http://127.0.0.1:8793",
+          status: "ready",
+          created_at: "2026-05-02T00:00:00Z",
+          active_job_id: null,
+          active_job_state: null,
+          error_message: null,
+        }),
+        { headers: { "content-type": "application/json" }, status: 200 },
+      );
+    }
+    if (String(input).endsWith("/api/desktops/desktop-1/destroy")) {
+      return new Response(JSON.stringify({ status: "destroyed" }), { headers: { "content-type": "application/json" }, status: 200 });
+    }
+    return new Response(JSON.stringify({ desktops: [] }), { headers: { "content-type": "application/json" }, status: 200 });
+  };
+
+  try {
+    await getDesktops();
+    const created = await createDesktop("Interview room");
+    await destroyDesktop("desktop-1");
+
+    assert.equal(created.browser_url, "http://127.0.0.1:3002");
+    assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/desktops");
+    assert.equal(calls[1]?.url, "http://127.0.0.1:8788/api/desktops");
+    assert.equal(calls[1]?.init?.method, "POST");
+    assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { label: "Interview room" });
+    assert.equal(calls[2]?.url, "http://127.0.0.1:8788/api/desktops/desktop-1/destroy");
+    assert.equal(calls[2]?.init?.method, "POST");
   } finally {
     globalThis.fetch = originalFetch;
   }

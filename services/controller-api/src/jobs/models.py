@@ -94,14 +94,17 @@ def resolve_capture_selection(
 
     if selected_backend == "docker_desktop":
         selected_target = default_docker_capture_target() if target is None else CaptureTarget.model_validate(target)
-        expected = default_docker_capture_target()
-        if selected_target.id != expected.id or selected_target.kind != expected.kind:
-            raise ValueError("docker_desktop only supports the isolated desktop target")
-        return "docker_desktop", selected_target
+        if selected_target.kind != "desktop":
+            raise ValueError("docker_desktop only supports isolated desktop targets")
+        return "docker_desktop", _stored_capture_target(selected_target)
 
     if target is None:
         raise ValueError("capture_target is required for macos_local")
-    return "macos_local", CaptureTarget.model_validate(target)
+    return "macos_local", _stored_capture_target(CaptureTarget.model_validate(target))
+
+
+def _stored_capture_target(target: CaptureTarget) -> CaptureTarget:
+    return target
 
 
 def capture_selection_from_metadata(metadata: dict[str, Any]) -> tuple[CaptureBackendName, dict[str, Any]]:
@@ -296,18 +299,6 @@ class LiveSnapshot(BaseModel):
     final_blocks: list[dict[str, Any]] = Field(default_factory=list)
     interim: str = ""
     sources: dict[str, dict[str, Any]] = Field(default_factory=dict)
-
-
-class HealthCheckResult(BaseModel):
-    ok: bool
-    status: str
-    details: dict[str, Any] = Field(default_factory=dict)
-
-
-class HealthStatusResponse(BaseModel):
-    desktop: HealthCheckResult
-    deepgram: HealthCheckResult
-    openclaw: HealthCheckResult
 
 
 def merge_metadata(job: Job, updates: dict[str, Any]) -> None:

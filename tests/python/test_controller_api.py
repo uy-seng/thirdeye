@@ -31,9 +31,9 @@ def test_session_json_endpoints_are_removed(client) -> None:
 
 
 def test_controller_routes_do_not_require_login_or_tokens(client) -> None:
-    plain = client.get("/api/settings/health")
-    header = client.get("/api/settings/health", headers={"authorization": "Bearer ignored"})
-    query = client.get("/api/settings/health?auth_token=ignored")
+    plain = client.get("/api/jobs")
+    header = client.get("/api/jobs", headers={"authorization": "Bearer ignored"})
+    query = client.get("/api/jobs?auth_token=ignored")
 
     assert plain.status_code == 200
     assert header.status_code == 200
@@ -54,22 +54,11 @@ def test_jobs_api_allows_tauri_dev_origin_for_credentialed_cors(client) -> None:
     assert response.headers["access-control-allow-credentials"] == "true"
 
 
-def test_health_endpoint_aggregates_runtime_checks(client) -> None:
-    response = client.get("/api/settings/health")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "desktop": {"ok": True, "status": "ok", "details": {"status": "ok", "fake_mode": True}},
-        "deepgram": {"ok": True, "status": "configured", "details": {"ok": True, "provider": "fake"}},
-        "openclaw": {"ok": True, "status": "ok", "details": {"status": "ok", "provider": "test-double"}},
-    }
-
-
-def test_openclaw_test_endpoint_returns_runtime_probe_details(client) -> None:
-    response = client.get("/api/settings/test/openclaw")
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok", "provider": "test-double"}
+def test_system_check_endpoints_are_removed(client) -> None:
+    assert client.get("/api/settings/health").status_code == 404
+    assert client.get("/api/settings/test/desktop").status_code == 404
+    assert client.get("/api/settings/test/deepgram").status_code == 404
+    assert client.get("/api/settings/test/openclaw").status_code == 404
 
 
 def test_artifacts_overview_lists_jobs_with_artifacts(client) -> None:

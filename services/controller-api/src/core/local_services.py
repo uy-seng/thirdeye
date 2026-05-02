@@ -19,7 +19,6 @@ from core.settings import THIRDEYE_APPLICATION_SUPPORT_ROOT
 
 CONTROLLER_API_PORT = 8788
 MACOS_CAPTURE_PORT = 8791
-DESKTOP_AGENT_PORT = 8790
 OPENCLAW_PORT = 18789
 PYTHON_SERVICE_DIRS = (
     Path("services/controller-api/src"),
@@ -34,6 +33,10 @@ BUILD_REPO_ROOT: str | None = os.environ.get("THIRDEYE_REPO_ROOT")
 
 def application_support_root() -> Path:
     return Path(os.environ.get("THIRDEYE_RUNTIME_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT))).expanduser()
+
+
+def resolve_runtime_root(runtime_root: Path) -> Path:
+    return runtime_root.expanduser().resolve()
 
 
 def discover_repo_root(start: Path | None = None) -> Path:
@@ -138,15 +141,24 @@ def macos_capture_permission_denied() -> bool:
         return False
 
 
+def controller_api_supports_desktops() -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{CONTROLLER_API_PORT}/api/desktops", timeout=2.0) as response:
+            return 200 <= response.status < 300
+    except urllib.error.HTTPError:
+        return False
+    except urllib.error.URLError:
+        return False
+
+
 def service_status(runtime_root: Path | None = None) -> dict[str, Any]:
-    selected_runtime_root = runtime_root or application_support_root()
+    selected_runtime_root = resolve_runtime_root(runtime_root or application_support_root())
     return {
         "runtime_root": str(selected_runtime_root),
         "controller_api_url": f"http://127.0.0.1:{CONTROLLER_API_PORT}",
         "reports": [
             service_report("Controller API", CONTROLLER_API_PORT),
             service_report("This Mac capture", MACOS_CAPTURE_PORT),
-            service_report("Isolated desktop", DESKTOP_AGENT_PORT),
             service_report("OpenClaw", OPENCLAW_PORT),
         ],
     }
@@ -203,15 +215,18 @@ def ensure_macos_capture_helper(repo_root: Path) -> Path:
 
 def controller_api_command(runtime_root: Path, repo_root: Path | None = None) -> str:
     selected_repo_root = repo_root or discover_repo_root()
+    selected_runtime_root = resolve_runtime_root(runtime_root)
     return (
         "set -a; [ ! -f .env ] || . ./.env; set +a; "
         f"{pythonpath_assignment(selected_repo_root)}"
         f"CONTROLLER_BASE_URL=http://127.0.0.1:{CONTROLLER_API_PORT} "
         "CONTROLLER_CORS_ORIGINS=http://127.0.0.1:1420,tauri://localhost "
-        f"CONTROLLER_DB_PATH={shell_escape(runtime_root / 'controller' / 'controller.db')} "
-        f"ARTIFACTS_ROOT={shell_escape(runtime_root / 'artifacts')} "
-        f"RECORDINGS_ROOT={shell_escape(runtime_root / 'recordings')} "
-        f"CONTROLLER_EVENTS_ROOT={shell_escape(runtime_root / 'controller-events')} "
+        f"CONTROLLER_DB_PATH={shell_escape(selected_runtime_root / 'controller' / 'controller.db')} "
+        f"ARTIFACTS_ROOT={shell_escape(selected_runtime_root / 'artifacts')} "
+        f"RECORDINGS_ROOT={shell_escape(selected_runtime_root / 'recordings')} "
+        f"CONTROLLER_EVENTS_ROOT={shell_escape(selected_runtime_root / 'controller-events')} "
+        f"DESKTOP_SESSIONS_ROOT={shell_escape(selected_runtime_root / 'desktop-sessions')} "
+        f"DESKTOP_SESSIONS_REGISTRY_PATH={shell_escape(selected_runtime_root / 'desktop-sessions' / 'sessions.json')} "
         f"MACOS_CAPTURE_BASE_URL=http://127.0.0.1:{MACOS_CAPTURE_PORT} "
         f"OPENCLAW_BASE_URL=${{LOCAL_OPENCLAW_BASE_URL:-http://127.0.0.1:{OPENCLAW_PORT}}} "
         ".venv/bin/uvicorn api.main:create_app --factory --host 127.0.0.1 --port 8788"
@@ -220,28 +235,22 @@ def controller_api_command(runtime_root: Path, repo_root: Path | None = None) ->
 
 def macos_capture_command(runtime_root: Path, helper_bin: Path, repo_root: Path | None = None) -> str:
     selected_repo_root = repo_root or discover_repo_root()
+    selected_runtime_root = resolve_runtime_root(runtime_root)
     return (
         "set -a; [ ! -f .env ] || . ./.env; set +a; "
         f"{pythonpath_assignment(selected_repo_root)}"
-        f"MACOS_CAPTURE_RUNTIME_DIR={shell_escape(runtime_root / 'macos-capture-runtime')} "
+        f"MACOS_CAPTURE_RUNTIME_DIR={shell_escape(selected_runtime_root / 'macos-capture-runtime')} "
         f"MACOS_CAPTURE_HELPER_BIN={shell_escape(helper_bin)} "
         "PYTHONUNBUFFERED=1 "
         ".venv/bin/python -m uvicorn thirdeye_macos_capture.agent.main:app --host 127.0.0.1 --port 8791"
     )
 
 
-def start_services(*, repo_root: Path | None = None, runtime_root: Path | None = None, include_desktop: bool = False) -> dict[str, Any]:
+def start_services(*, repo_root: Path | None = None, runtime_root: Path | None = None) -> dict[str, Any]:
     selected_repo_root = repo_root or discover_repo_root()
-    selected_runtime_root = runtime_root or application_support_root()
+    selected_runtime_root = resolve_runtime_root(runtime_root or application_support_root())
     ensure_runtime_dirs(selected_runtime_root)
     helper_bin = ensure_macos_capture_helper(selected_repo_root)
-
-    if include_desktop:
-        run_shell(
-            selected_repo_root,
-            f"THIRDEYE_RUNTIME_ROOT={shell_escape(selected_runtime_root)} "
-            f"docker compose --env-file .env -f {COMPOSE_FILE.as_posix()} up -d --remove-orphans",
-        )
 
     if (
         is_port_open(MACOS_CAPTURE_PORT)
@@ -260,6 +269,15 @@ def start_services(*, repo_root: Path | None = None, runtime_root: Path | None =
         )
         wait_for_port_open(MACOS_CAPTURE_PORT, "macos-capture-agent")
 
+    if is_port_open(CONTROLLER_API_PORT) and not controller_api_supports_desktops():
+        if supervised_service_pid(selected_runtime_root, "controller-api") is None:
+            raise RuntimeError(
+                "Controller API is running on 127.0.0.1:8788 but does not support isolated desktops. "
+                "Stop that process and start local services again."
+            )
+        stop_supervised_service(selected_runtime_root, "controller-api")
+        wait_for_port_closed(CONTROLLER_API_PORT)
+
     if not is_port_open(CONTROLLER_API_PORT):
         spawn_service(
             repo_root=selected_repo_root,
@@ -277,18 +295,11 @@ def start_services(*, repo_root: Path | None = None, runtime_root: Path | None =
     }
 
 
-def stop_services(*, runtime_root: Path | None = None, include_desktop: bool = False, repo_root: Path | None = None) -> dict[str, Any]:
-    selected_runtime_root = runtime_root or application_support_root()
+def stop_services(*, runtime_root: Path | None = None) -> dict[str, Any]:
+    selected_runtime_root = resolve_runtime_root(runtime_root or application_support_root())
     supervisor_dir = selected_runtime_root / "supervisor"
     for pid_file in supervisor_dir.glob("*.pid"):
         stop_supervised_service(selected_runtime_root, pid_file.stem)
-
-    if include_desktop:
-        run_shell(
-            repo_root or discover_repo_root(),
-            f"THIRDEYE_RUNTIME_ROOT={shell_escape(selected_runtime_root)} "
-            f"docker compose --env-file .env -f {COMPOSE_FILE.as_posix()} down",
-        )
 
     return {
         "ok": True,
@@ -302,7 +313,7 @@ def tool_available(name: str) -> bool:
 
 
 def doctor_report(*, repo_root: Path | None = None, runtime_root: Path | None = None) -> dict[str, Any]:
-    selected_runtime_root = runtime_root or application_support_root()
+    selected_runtime_root = resolve_runtime_root(runtime_root or application_support_root())
     checks = [
         {"name": "python3", "ok": tool_available("python3"), "detail": "Required for setup and tests."},
         {"name": "node", "ok": tool_available("node"), "detail": "Required for the Tauri frontend."},
@@ -319,7 +330,7 @@ def doctor_report(*, repo_root: Path | None = None, runtime_root: Path | None = 
 
 def setup_workspace(*, repo_root: Path | None = None, runtime_root: Path | None = None) -> dict[str, Any]:
     selected_repo_root = repo_root or discover_repo_root()
-    selected_runtime_root = runtime_root or application_support_root()
+    selected_runtime_root = resolve_runtime_root(runtime_root or application_support_root())
     ensure_runtime_dirs(selected_runtime_root)
     if not selected_repo_root.joinpath(".env").exists():
         shutil.copyfile(selected_repo_root / ".env.example", selected_repo_root / ".env")
@@ -342,15 +353,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=["start", "stop", "status", "doctor", "setup"])
     parser.add_argument("--runtime-root", type=Path)
     parser.add_argument("--repo-root", type=Path)
-    parser.add_argument("--desktop", action="store_true", help="Include optional Docker desktop services.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     try:
         if args.command == "start":
-            payload = start_services(repo_root=args.repo_root, runtime_root=args.runtime_root, include_desktop=args.desktop)
+            payload = start_services(repo_root=args.repo_root, runtime_root=args.runtime_root)
         elif args.command == "stop":
-            payload = stop_services(repo_root=args.repo_root, runtime_root=args.runtime_root, include_desktop=args.desktop)
+            payload = stop_services(runtime_root=args.runtime_root)
         elif args.command == "status":
             payload = service_status(runtime_root=args.runtime_root)
         elif args.command == "doctor":

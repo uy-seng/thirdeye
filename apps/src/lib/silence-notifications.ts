@@ -36,6 +36,15 @@ export function silenceNotificationTimeoutMsForJob(job: Pick<JobResponse, "silen
   return job.silence_timeout_minutes > 0 ? job.silence_timeout_minutes * MINUTE_MS : SILENCE_NOTIFICATION_TIMEOUT_MS;
 }
 
+export function silenceNotificationRecordingLabel(job: Pick<JobResponse, "title" | "capture_target">) {
+  const title = job.title.trim() || "Untitled capture";
+  const targetLabel = job.capture_target.label.trim();
+  if (!targetLabel || targetLabel.toLocaleLowerCase() === title.toLocaleLowerCase()) {
+    return title;
+  }
+  return `${title} - ${targetLabel}`;
+}
+
 export function recordEmptyTranscriptResult(
   state: SilenceNotificationState,
   now: number,

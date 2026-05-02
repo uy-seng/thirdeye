@@ -15,7 +15,7 @@ class FakeCaptureClient:
         if status_payload is not None:
             self.status_payload = status_payload
 
-    async def status(self) -> dict[str, object]:
+    async def status(self, target: dict[str, object] | None = None) -> dict[str, object]:
         return self.status_payload
 
 

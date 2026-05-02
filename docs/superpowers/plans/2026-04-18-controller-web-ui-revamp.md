@@ -157,7 +157,6 @@ Expected: FAIL because `/jobs` does not exist and the dashboard still owns archi
     <DashboardActiveJob active={active} />
     <StartCaptureForm />
   </div>
-  <HealthStatusGrid health={health} />
   <JobsList items={priorityJobs} title="Priority queue" />
 </AppShell>
 ```

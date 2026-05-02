@@ -155,7 +155,20 @@ fn reconcile_controller_api(
     runtime_root: &Path,
     children: &mut AppServiceChildren,
 ) -> Result<(), String> {
-    if child_is_running(&mut children.controller_api)? || is_port_open(CONTROLLER_API_PORT) {
+    let child_running = child_is_running(&mut children.controller_api)?;
+    let port_open = is_port_open(CONTROLLER_API_PORT);
+
+    if port_open && !controller_api_supports_desktops() {
+        if child_running || supervisor_pid_file(runtime_root, "controller-api").exists() {
+            stop_child_service(runtime_root, "controller-api", &mut children.controller_api)?;
+            wait_for_port_closed(CONTROLLER_API_PORT, Duration::from_secs(3));
+        } else {
+            return Err(
+                "Controller API is running on 127.0.0.1:8788 but does not support isolated desktops. Stop that process and start local services again."
+                    .to_string(),
+            );
+        }
+    } else if child_running || port_open {
         return Ok(());
     }
 
@@ -324,6 +337,27 @@ fn macos_capture_has_active_capture() -> bool {
     }
 }
 
+fn controller_api_supports_desktops() -> bool {
+    matches!(
+        local_http_status(CONTROLLER_API_PORT, "/api/desktops", Duration::from_secs(2)),
+        Ok(200)
+    )
+}
+
+fn local_http_status(port: u16, path: &str, timeout: Duration) -> Result<u16, String> {
+    let response = local_http_get(port, path, timeout)?;
+    let status_line = response
+        .lines()
+        .next()
+        .ok_or_else(|| "Local service returned an empty response.".to_string())?;
+    status_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| "Local service returned an invalid HTTP response.".to_string())?
+        .parse::<u16>()
+        .map_err(|error| format!("Local service returned an invalid HTTP status: {error}"))
+}
+
 fn local_http_get(port: u16, path: &str, timeout: Duration) -> Result<String, String> {
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     let mut stream = TcpStream::connect_timeout(&address, timeout)
@@ -416,6 +450,8 @@ fn controller_api_command(repo_root: &Path, runtime_root: &Path) -> String {
          ARTIFACTS_ROOT={} \
          RECORDINGS_ROOT={} \
          CONTROLLER_EVENTS_ROOT={} \
+         DESKTOP_SESSIONS_ROOT={} \
+         DESKTOP_SESSIONS_REGISTRY_PATH={} \
          MACOS_CAPTURE_BASE_URL=http://127.0.0.1:{MACOS_CAPTURE_PORT} \
          OPENCLAW_BASE_URL=${{LOCAL_OPENCLAW_BASE_URL:-http://127.0.0.1:18789}} \
          {} -m uvicorn api.main:create_app --factory --host 127.0.0.1 --port {CONTROLLER_API_PORT}",
@@ -424,6 +460,8 @@ fn controller_api_command(repo_root: &Path, runtime_root: &Path) -> String {
         shell_escape(&runtime_root.join("artifacts")),
         shell_escape(&runtime_root.join("recordings")),
         shell_escape(&runtime_root.join("controller-events")),
+        shell_escape(&runtime_root.join("desktop-sessions")),
+        shell_escape(&runtime_root.join("desktop-sessions").join("sessions.json")),
         shell_escape(&python_bin(repo_root)),
     )
 }

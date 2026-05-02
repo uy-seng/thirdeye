@@ -15,6 +15,7 @@ import {
   recordTranscriptIdleTick,
   recordTranscriptIdleTickAndEvaluate,
   recordTranscriptActivity,
+  silenceNotificationRecordingLabel,
   silenceNotificationTimeoutMsForJob,
 } from "../lib/silence-notifications";
 
@@ -68,6 +69,41 @@ test("starts the silence timer when Deepgram returns no transcript results", () 
 test("uses the capture silence timeout for inactivity alerts", () => {
   assert.equal(silenceNotificationTimeoutMsForJob({ silence_timeout_minutes: 5 }), 5 * 60 * 1000);
   assert.equal(silenceNotificationTimeoutMsForJob({ silence_timeout_minutes: 0 }), SILENCE_NOTIFICATION_TIMEOUT_MS);
+});
+
+test("builds a silence alert label that identifies the recording", () => {
+  assert.equal(
+    silenceNotificationRecordingLabel({
+      title: "Authorized session",
+      capture_target: {
+        id: "desktop-1",
+        kind: "desktop",
+        label: "Meeting desktop",
+        app_bundle_id: null,
+        app_name: null,
+        app_pid: null,
+        window_id: null,
+        display_id: null,
+      },
+    }),
+    "Authorized session - Meeting desktop",
+  );
+  assert.equal(
+    silenceNotificationRecordingLabel({
+      title: "Display 1",
+      capture_target: {
+        id: "display-1",
+        kind: "display",
+        label: "Display 1",
+        app_bundle_id: null,
+        app_name: null,
+        app_pid: null,
+        window_id: null,
+        display_id: "1",
+      },
+    }),
+    "Display 1",
+  );
 });
 
 test("cancels a running silence timer when non-empty transcription arrives", () => {

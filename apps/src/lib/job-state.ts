@@ -1,4 +1,4 @@
-import type { CompletedJobWarning, JobMetadataJson } from "./types";
+import type { CompletedJobWarning, DesktopSession, JobMetadataJson } from "./types";
 
 export const ACTIVE_STATES = new Set([
   "pending_start",
@@ -15,6 +15,8 @@ export const ACTIVE_STATES = new Set([
 const STOPPABLE_STATES = new Set(["recording", "live_streaming"]);
 const MUTE_TOGGLE_STATES = new Set(["recording", "live_streaming"]);
 const MICROPHONE_TOGGLE_STATES = new Set(["recording", "live_streaming"]);
+const DESKTOP_RECORDING_STATES = new Set(["pending_start", "recording", "live_stream_connecting", "live_streaming"]);
+const DESKTOP_STOPPING_STATES = new Set(["stopping", "finalizing_deepgram"]);
 const WARNING_STATUSES = new Set(["failed", "warning", "retry_required", "needs_attention"]);
 
 const STOP_PROGRESS_MESSAGES: Record<string, string> = {
@@ -31,6 +33,30 @@ export function canStopCapture(state: string, stopPending = false) {
 
 export function canDeleteJob(state: string, deletePending = false) {
   return !deletePending && !ACTIVE_STATES.has(state);
+}
+
+export function desktopCaptureBusyLabel(activeJobState?: string | null) {
+  if (!activeJobState || DESKTOP_RECORDING_STATES.has(activeJobState)) {
+    return "recording";
+  }
+  if (DESKTOP_STOPPING_STATES.has(activeJobState)) {
+    return "stopping";
+  }
+  return "finishing up";
+}
+
+export function desktopSessionActivityLabel(desktop: Pick<DesktopSession, "active_job_id" | "active_job_state" | "browser_url">) {
+  if (!desktop.active_job_id) {
+    return desktop.browser_url;
+  }
+  const busyLabel = desktopCaptureBusyLabel(desktop.active_job_state);
+  if (busyLabel === "recording") {
+    return "Recording now";
+  }
+  if (busyLabel === "stopping") {
+    return "Stopping capture";
+  }
+  return "Finishing up";
 }
 
 export function targetAudioMuted(job: {

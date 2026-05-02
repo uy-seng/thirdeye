@@ -3,9 +3,10 @@ import { Bell, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  createDesktop,
   deleteJob,
   getArtifactsOverview,
-  getHealth,
+  getDesktops,
   getJob,
   getJobs,
   setRecordMicrophoneEnabled,
@@ -15,15 +16,14 @@ import {
 import { chooseSelectedJobId } from "../lib/job-selection";
 import { ACTIVE_STATES, canDeleteJob, canStopCapture } from "../lib/job-state";
 import { getServiceStatus, startLocalServices, stopLocalServices } from "../lib/services";
-import type { ArtifactFile, HealthStatusResponse, JobDetailResponse, JobResponse, ServiceStatus } from "../lib/types";
+import type { ArtifactFile, DesktopSession, JobDetailResponse, JobResponse, ServiceStatus } from "../lib/types";
 import { useSilenceNotification } from "../lib/use-silence-notification";
 import { Navigation } from "../components/navigation/Navigation";
 import { ServiceStrip } from "../components/services/ServiceStrip";
 import { Button } from "../components/ui";
-import { StartCapturePanel } from "../features/capture";
-import { HealthPanel } from "../features/health/HealthPanel";
+import { DesktopSessionsPanel, StartCapturePanel } from "../features/capture";
 import { JobDetail, JobsTable } from "../features/jobs";
-import { LiveCaptureControls, LiveSummaryPanel, LiveTranscript } from "../features/live";
+import { LiveCaptureControls, LiveJobSelector, LiveSummaryPanel, LiveTranscript } from "../features/live";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import { VoiceNotesPanel } from "../features/voice-notes/VoiceNotesPanel";
 import type { View } from "./view";
@@ -57,8 +57,8 @@ function viewTitle(view: View) {
 export function App() {
   const [view, setView] = useState<View>("dashboard");
   const [serviceStatus, setServiceStatus] = useState<ServiceStatus | null>(null);
-  const [health, setHealth] = useState<HealthStatusResponse | null>(null);
   const [jobs, setJobs] = useState<JobResponse[]>([]);
+  const [desktops, setDesktops] = useState<DesktopSession[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<JobDetailResponse | null>(null);
   const [stoppingJobId, setStoppingJobId] = useState<string | null>(null);
@@ -71,14 +71,17 @@ export function App() {
   const [silenceAlert, setSilenceAlert] = useState<SilenceAppAlertPayload | null>(null);
   const selectedJobIdRef = useRef<string | null>(null);
 
-  const activeJob = useMemo(() => jobs.find((job) => ACTIVE_STATES.has(job.state)) ?? null, [jobs]);
-  const visibleView = view === "live" && !activeJob ? "capture" : view;
-  const liveJob = selectedJob?.id === activeJob?.id ? selectedJob : null;
+  const activeJobs = useMemo(() => jobs.filter((job) => ACTIVE_STATES.has(job.state)), [jobs]);
+  const visibleView = view === "live" && activeJobs.length === 0 ? "capture" : view;
+  const selectedActiveListJob = selectedJobId ? activeJobs.find((job) => job.id === selectedJobId) ?? null : null;
+  const selectedActiveJob = selectedJob && selectedJob.id === selectedJobId && ACTIVE_STATES.has(selectedJob.state) ? selectedJob : null;
+  const liveJobListItem = selectedActiveListJob ?? activeJobs[0] ?? null;
+  const liveJob = selectedActiveJob?.id === liveJobListItem?.id ? selectedActiveJob : null;
   const handleSilenceNotificationUnavailable = useCallback((message: string) => {
     setNotice(message);
   }, []);
 
-  useSilenceNotification(activeJob, handleSilenceNotificationUnavailable);
+  useSilenceNotification(activeJobs, handleSilenceNotificationUnavailable);
 
   useEffect(() => {
     let active = true;
@@ -112,7 +115,11 @@ export function App() {
   }
 
   async function refreshStatus() {
-    setServiceStatus(await getServiceStatus());
+    try {
+      setServiceStatus(await getServiceStatus());
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to refresh local service status.");
+    }
   }
 
   async function loadJobs(preferredJobId: string | null = null) {
@@ -124,6 +131,11 @@ export function App() {
       preferredJobId,
     });
     selectJob(nextSelected);
+  }
+
+  async function loadDesktops() {
+    const payload = await getDesktops();
+    setDesktops(payload.desktops);
   }
 
   async function loadSelectedJob(jobId: string | null = selectedJobIdRef.current) {
@@ -161,9 +173,8 @@ export function App() {
 
   async function refreshControllerData() {
     try {
-      const [nextJobs, nextHealth] = await Promise.all([getJobs(), getHealth()]);
+      const nextJobs = await getJobs();
       setJobs(nextJobs);
-      setHealth(nextHealth);
       const nextSelected = chooseSelectedJobId({
         currentJobId: selectedJobIdRef.current,
         jobs: nextJobs,
@@ -175,10 +186,18 @@ export function App() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to reach the controller.");
     }
+
+    try {
+      const nextDesktops = await getDesktops();
+      setDesktops(nextDesktops.desktops);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to load desktop workspaces.");
+    }
   }
 
   useEffect(() => {
     async function boot() {
+      void refreshControllerData();
       try {
         const result = await startLocalServices();
         setNotice(result.detail);
@@ -196,12 +215,12 @@ export function App() {
   }, [selectedJobId]);
 
   useEffect(() => {
-    if (visibleView !== "live" || !activeJob || selectedJob?.id === activeJob.id) {
+    if (visibleView !== "live" || !liveJobListItem || selectedJobId === liveJobListItem.id) {
       return;
     }
-    selectJob(activeJob.id);
-    void loadSelectedJob(activeJob.id);
-  }, [activeJob?.id, selectedJob?.id, visibleView]);
+    selectJob(liveJobListItem.id);
+    void loadSelectedJob(liveJobListItem.id);
+  }, [liveJobListItem?.id, selectedJobId, visibleView]);
 
   useEffect(() => {
     if (stoppingJobId && selectedJob?.id === stoppingJobId && !canStopCapture(selectedJob.state)) {
@@ -232,8 +251,20 @@ export function App() {
     setSelectedJob(null);
     setArtifacts([]);
     await loadJobs(job.id);
+    await loadDesktops();
     await loadSelectedJob(job.id);
     setView("live");
+  }
+
+  async function handleCreateDesktop(label: string) {
+    await createDesktop(label);
+    await loadDesktops();
+  }
+
+  function handleSelectLiveJob(jobId: string) {
+    selectJob(jobId);
+    setSelectedJob(null);
+    setArtifacts([]);
   }
 
   async function handleStopJob(jobId: string) {
@@ -241,6 +272,7 @@ export function App() {
     try {
       await stopCapture(jobId);
       await loadJobs();
+      await loadDesktops();
       await loadSelectedJob(jobId);
       await refreshStoppedJobUntilSettled(jobId);
     } catch (error) {
@@ -317,7 +349,7 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <Navigation setView={setView} view={visibleView} liveAvailable={Boolean(activeJob)} />
+      <Navigation setView={setView} view={visibleView} liveAvailable={activeJobs.length > 0} />
       <main className="workspace">
         <header className="topbar">
           <div>
@@ -350,8 +382,8 @@ export function App() {
         {visibleView === "dashboard" ? (
           <div className="grid-two">
             <ServiceStrip onRefresh={() => void refreshStatus()} onStart={() => void handleStart()} onStop={() => void handleStopServices()} status={serviceStatus} />
-            <HealthPanel health={health} />
-            <StartCapturePanel activeCapture={activeJob} onCreated={(job) => void handleCaptureCreated(job)} />
+            <DesktopSessionsPanel desktops={desktops} onCreate={handleCreateDesktop} onDestroyed={loadDesktops} onRefresh={loadDesktops} />
+            <StartCapturePanel activeCaptures={activeJobs} onCreated={(job) => void handleCaptureCreated(job)} targetRefreshSignal={desktops} />
             <JobsTable jobs={jobs.slice(0, 6)} onSelect={(jobId) => {
               selectJob(jobId);
               setView("jobs");
@@ -359,7 +391,12 @@ export function App() {
           </div>
         ) : null}
 
-        {visibleView === "capture" ? <StartCapturePanel activeCapture={activeJob} onCreated={(job) => void handleCaptureCreated(job)} /> : null}
+        {visibleView === "capture" ? (
+          <div className="grid-two">
+            <DesktopSessionsPanel desktops={desktops} onCreate={handleCreateDesktop} onDestroyed={loadDesktops} onRefresh={loadDesktops} />
+            <StartCapturePanel activeCaptures={activeJobs} onCreated={(job) => void handleCaptureCreated(job)} targetRefreshSignal={desktops} />
+          </div>
+        ) : null}
 
         {visibleView === "jobs" ? (
           <div className="grid-two">
@@ -378,18 +415,19 @@ export function App() {
           </div>
         ) : null}
 
-        {visibleView === "live" && activeJob ? (
+        {visibleView === "live" && liveJobListItem ? (
           <>
+            <LiveJobSelector jobs={activeJobs} selectedJobId={liveJobListItem.id} onSelect={handleSelectLiveJob} />
             <LiveCaptureControls
-              job={liveJob ?? activeJob}
-              microphonePending={microphoneJobId === activeJob.id}
-              mutePending={mutingJobId === activeJob.id}
+              job={liveJobListItem}
+              microphonePending={microphoneJobId === liveJobListItem.id}
+              mutePending={mutingJobId === liveJobListItem.id}
               onSetRecordMicrophone={(jobId, enabled) => void handleSetRecordMicrophone(jobId, enabled)}
               onSetMuted={(jobId, muted) => void handleSetTargetAudioMuted(jobId, muted)}
             />
             <div className="grid-two live-workspace">
               <LiveTranscript job={liveJob} />
-              <LiveSummaryPanel job={liveJob} onSaved={() => void loadSelectedJob(activeJob.id)} />
+              <LiveSummaryPanel job={liveJob} onSaved={() => liveJob ? void loadSelectedJob(liveJob.id) : undefined} />
             </div>
           </>
         ) : null}

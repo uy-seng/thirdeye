@@ -14,15 +14,13 @@ Command-line service development:
 
 ```bash
 make build
-make up
 make dev-api
 ```
 
 ## Health
 
 - Controller: `curl -fsS http://127.0.0.1:8788/api/health`
-- Desktop agent: `curl -fsS http://127.0.0.1:8790/health`
-- Desktop via controller API: `curl -fsS http://127.0.0.1:8788/api/settings/test/desktop`
+- Desktop sessions: `curl -fsS http://127.0.0.1:8788/api/desktops`
 - OpenClaw: `curl -fsS http://127.0.0.1:18789/healthz`
 - Supervisor: `make services-status`
 
@@ -44,4 +42,4 @@ make test-all
 make down
 ```
 
-The macOS app's Stop services button stops app-managed local services. Optional Docker services can be stopped with `make down`.
+The macOS app's Stop services button stops app-managed local services. On-demand desktops should be destroyed from the app.

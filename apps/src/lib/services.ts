@@ -48,8 +48,8 @@ export function openLogsFolder() {
   return invoke("open_logs_folder");
 }
 
-export function openIsolatedDesktop() {
-  return invoke("open_isolated_desktop");
+export function openIsolatedDesktop(browserUrl: string) {
+  return invoke("open_isolated_desktop", { browserUrl });
 }
 
 export function openArtifactInFinder(path: string) {
