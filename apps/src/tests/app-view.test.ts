@@ -234,10 +234,14 @@ test("start session exposes recording and summary options", () => {
   assert.match(captureSource, /alert: \{\s*title: "Test silence alert",\s*body: "This is a 15-second test using the same silence alert timer\.",\s*\}/);
   assert.match(captureSource, /Test alert scheduled\. It will appear in 15 seconds\./);
   assert.match(captureSource, /silence_timeout_minutes: SILENCE_NOTIFICATION_TIMEOUT_MINUTES/);
+  assert.match(captureSource, /const \[recordMicrophone, setRecordMicrophone\] = useState\(false\);/);
+  assert.match(captureSource, /Record microphone/);
+  assert.match(captureSource, /Use your microphone without changing other apps\./);
+  assert.match(captureSource, /record_microphone: canRecordMicrophone \? recordMicrophone : false/);
   assert.match(captureSource, /Mute this app for me/);
   assert.match(captureSource, /This mutes the selected app while capture runs\./);
   assert.doesNotMatch(captureSource, /Google Chrome/);
-  assert.match(captureSource, /mute_target_audio: canMuteTargetAudio \? muteTargetAudio : false/);
+  assert.match(captureSource, /mute_target_audio: canMuteTargetAudio && !recordMicrophone \? muteTargetAudio : false/);
   assert.match(captureSource, /notify_on_inactivity: notifyOnInactivity/);
   assert.match(captureSource, />\s*Test alert\s*</);
   assert.match(captureSource, /Generate summary/);
@@ -247,15 +251,24 @@ test("start session exposes recording and summary options", () => {
 
 test("live view exposes a runtime app mute toggle for active captures", () => {
   assert.match(appSource, /setTargetAudioMuted/);
+  assert.match(appSource, /setRecordMicrophoneEnabled/);
   assert.match(appSource, /const \[mutingJobId, setMutingJobId\] = useState<string \| null>\(null\);/);
+  assert.match(appSource, /const \[microphoneJobId, setMicrophoneJobId\] = useState<string \| null>\(null\);/);
   assert.match(appSource, /async function handleSetTargetAudioMuted\(jobId: string, muted: boolean\)/);
+  assert.match(appSource, /async function handleSetRecordMicrophone\(jobId: string, enabled: boolean\)/);
   assert.match(appSource, /<LiveCaptureControls/);
   assert.match(liveControlsSource, /VolumeX/);
   assert.match(liveControlsSource, /Volume2/);
+  assert.match(liveControlsSource, /MicOff/);
+  assert.match(liveControlsSource, /Mic/);
   assert.match(liveControlsSource, /Mute app/);
   assert.match(liveControlsSource, /Unmute app/);
+  assert.match(liveControlsSource, /Record microphone/);
+  assert.match(liveControlsSource, /Stop microphone/);
   assert.match(liveControlsSource, /canToggleTargetAudioMute/);
+  assert.match(liveControlsSource, /canToggleMicrophoneRecording/);
   assert.match(liveControlsSource, /targetAudioMuted/);
+  assert.match(liveControlsSource, /recordMicrophoneEnabled/);
 });
 
 test("voice notes are available as a separate recording workspace", () => {

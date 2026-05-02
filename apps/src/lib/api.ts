@@ -100,6 +100,7 @@ export function startCapture(payload: {
   capture_backend: CaptureBackend;
   capture_target?: CaptureTarget;
   record_screen: boolean;
+  record_microphone: boolean;
   generate_summary: boolean;
   mute_target_audio: boolean;
   notify_on_inactivity: boolean;
@@ -113,6 +114,7 @@ export function startCapture(payload: {
       capture_backend: payload.capture_backend,
       capture_target: payload.capture_target,
       record_screen: payload.record_screen,
+      record_microphone: payload.record_microphone,
       generate_summary: payload.generate_summary,
       mute_target_audio: payload.mute_target_audio,
       notify_on_inactivity: payload.notify_on_inactivity,
@@ -129,6 +131,13 @@ export function setTargetAudioMuted(jobId: string, muteTargetAudio: boolean) {
   return apiJson<JobResponse>(`/api/jobs/${jobId}/mute-target-audio`, {
     method: "POST",
     body: JSON.stringify({ mute_target_audio: muteTargetAudio }),
+  });
+}
+
+export function setRecordMicrophoneEnabled(jobId: string, recordMicrophone: boolean) {
+  return apiJson<JobResponse>(`/api/jobs/${jobId}/record-microphone`, {
+    method: "POST",
+    body: JSON.stringify({ record_microphone: recordMicrophone }),
   });
 }
 

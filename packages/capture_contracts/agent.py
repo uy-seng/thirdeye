@@ -19,6 +19,7 @@ class CaptureCommandRequest(BaseModel):
     output_file: str | None = None
     target: CaptureTarget | None = None
     mute_target_audio: bool = False
+    record_microphone: bool = False
 
 
 def read_pid(path: Path) -> int | None:

@@ -76,6 +76,7 @@ async def start_recording(request: CommandRequest) -> JSONResponse:
             request.output_file,
             request.target.model_dump(),
             request.mute_target_audio,
+            request.record_microphone,
         )
     except Exception as exc:
         raise _http_error(exc) from exc
@@ -102,6 +103,7 @@ async def start_live_audio(request: CommandRequest) -> JSONResponse:
             request.job_id,
             request.target.model_dump(),
             request.mute_target_audio,
+            request.record_microphone,
         )
         fanout.reset()
         fanout.ensure_running()
@@ -131,6 +133,21 @@ async def set_target_audio_muted(request: CommandRequest) -> JSONResponse:
             request.job_id,
             request.target.model_dump(),
             request.mute_target_audio,
+        )
+    except Exception as exc:
+        raise _http_error(exc) from exc
+    return JSONResponse(payload)
+
+
+@app.post("/microphone/record")
+async def set_record_microphone_enabled(request: CommandRequest) -> JSONResponse:
+    if request.target is None:
+        raise HTTPException(status_code=422, detail="target is required")
+    try:
+        payload = await runtime.set_record_microphone_enabled(
+            request.job_id,
+            request.target.model_dump(),
+            request.record_microphone,
         )
     except Exception as exc:
         raise _http_error(exc) from exc

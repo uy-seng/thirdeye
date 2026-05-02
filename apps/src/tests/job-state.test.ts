@@ -4,9 +4,11 @@ import test from "node:test";
 import {
   canDeleteJob,
   canStopCapture,
+  canToggleMicrophoneRecording,
   canToggleTargetAudioMute,
   completedJobWarnings,
   formatStateLabel,
+  recordMicrophoneEnabled,
   stateTone,
   stopCaptureButtonLabel,
   stopCaptureStatusMessage,
@@ -80,4 +82,23 @@ test("allows runtime mute toggles only for active local app or window captures",
   assert.equal(canToggleTargetAudioMute({ ...localAppJob, state: "pending_start" }), false);
   assert.equal(canToggleTargetAudioMute(localDisplayJob), false);
   assert.equal(canToggleTargetAudioMute(dockerJob), false);
+});
+
+test("allows runtime microphone toggles only for active local captures", () => {
+  const localDisplayJob = {
+    state: "live_streaming",
+    capture_backend: "macos_local",
+    capture_target: { kind: "display" },
+    metadata_json: { session_preferences: { record_microphone: true } },
+  };
+  const dockerJob = {
+    ...localDisplayJob,
+    capture_backend: "docker_desktop",
+  };
+
+  assert.equal(recordMicrophoneEnabled(localDisplayJob), true);
+  assert.equal(canToggleMicrophoneRecording(localDisplayJob), true);
+  assert.equal(canToggleMicrophoneRecording({ ...localDisplayJob, state: "recording" }), true);
+  assert.equal(canToggleMicrophoneRecording({ ...localDisplayJob, state: "pending_start" }), false);
+  assert.equal(canToggleMicrophoneRecording(dockerJob), false);
 });

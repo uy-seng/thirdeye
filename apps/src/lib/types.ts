@@ -95,6 +95,7 @@ export type TranscriptBlock = {
 export type JobMetadataJson = Record<string, unknown> & {
   session_preferences?: {
     record_screen?: boolean;
+    record_microphone?: boolean;
     generate_summary?: boolean;
     mute_target_audio?: boolean;
     notify_on_inactivity?: boolean;

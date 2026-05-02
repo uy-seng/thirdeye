@@ -52,6 +52,18 @@ class CaptureMuteStateError(CaptureMuteError):
     pass
 
 
+class CaptureMicrophoneError(RuntimeError):
+    pass
+
+
+class CaptureMicrophoneUnsupportedError(CaptureMicrophoneError):
+    pass
+
+
+class CaptureMicrophoneStateError(CaptureMicrophoneError):
+    pass
+
+
 @dataclass
 class JobRepository:
     session_factory: sessionmaker
@@ -100,6 +112,7 @@ class JobRepository:
                         },
                         "session_preferences": {
                             "record_screen": payload.record_screen,
+                            "record_microphone": payload.record_microphone,
                             "generate_summary": payload.generate_summary,
                             "mute_target_audio": payload.mute_target_audio,
                             "notify_on_inactivity": payload.notify_on_inactivity,
@@ -327,6 +340,9 @@ class CaptureRuntime:
     def _record_screen_enabled(self, job: JobResponse) -> bool:
         return self._session_preference(job, "record_screen", True)
 
+    def _record_microphone_enabled(self, job: JobResponse) -> bool:
+        return self._session_preference(job, "record_microphone", False)
+
     def _summary_enabled(self, job: JobResponse) -> bool:
         return self._session_preference(job, "generate_summary", True)
 
@@ -347,6 +363,7 @@ class CaptureRuntime:
         backend = self._backend_for_job(job)
         recording_stage_path = self.artifacts.recording_stage_path(job.id).as_posix()
         record_screen = self._record_screen_enabled(job)
+        record_microphone = self._record_microphone_enabled(job)
         mute_target_audio = self._mute_target_audio_enabled(job)
         self.jobs.transition_job(job.id, JobState.PENDING_START, "capture requested")
         recording_started = False
@@ -358,6 +375,7 @@ class CaptureRuntime:
                     recording_stage_path,
                     job.capture_target,
                     mute_target_audio,
+                    record_microphone,
                 )
                 recording_started = True
                 job = self.jobs.update_runtime_fields(
@@ -367,7 +385,7 @@ class CaptureRuntime:
                 )
                 self.jobs.transition_job(job.id, JobState.RECORDING, "recording started")
 
-            live_audio_response = await backend.start_live_audio(job.id, job.capture_target, mute_target_audio)
+            live_audio_response = await backend.start_live_audio(job.id, job.capture_target, mute_target_audio, record_microphone)
             live_audio_started = True
             job = self.jobs.update_runtime_fields(job.id, live_audio_pid=live_audio_response.get("pid"))
             self.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "live audio started")
@@ -489,6 +507,31 @@ class CaptureRuntime:
             await self.transcript_hub.publish(
                 job.id,
                 {"type": "status", "state": updated.state, "mute_target_audio": mute_target_audio},
+            )
+        return updated
+
+    async def set_record_microphone_enabled(self, job_id: str, record_microphone: bool) -> JobResponse:
+        job = self.jobs.get_job(job_id)
+        if job.capture_backend != "macos_local":
+            raise CaptureMicrophoneUnsupportedError("runtime microphone recording is only available for This Mac capture")
+        if job.state not in {JobState.RECORDING.value, JobState.LIVE_STREAMING.value}:
+            raise CaptureMicrophoneStateError("capture must be recording before changing microphone")
+        if record_microphone and self._mute_target_audio_enabled(job):
+            raise CaptureMicrophoneUnsupportedError("turn off muted app audio before recording microphone")
+        if self._record_microphone_enabled(job) == record_microphone:
+            return job
+
+        backend = self._backend_for_job(job)
+        try:
+            await backend.set_record_microphone_enabled(job.id, job.capture_target, record_microphone)
+        except Exception as exc:
+            raise CaptureMicrophoneError(self._failure_message(exc)) from exc
+
+        updated = self._update_session_preference(job, "record_microphone", record_microphone)
+        with contextlib.suppress(Exception):
+            await self.transcript_hub.publish(
+                job.id,
+                {"type": "status", "state": updated.state, "record_microphone": record_microphone},
             )
         return updated
 

@@ -14,6 +14,7 @@ export const ACTIVE_STATES = new Set([
 
 const STOPPABLE_STATES = new Set(["recording", "live_streaming"]);
 const MUTE_TOGGLE_STATES = new Set(["recording", "live_streaming"]);
+const MICROPHONE_TOGGLE_STATES = new Set(["recording", "live_streaming"]);
 const WARNING_STATUSES = new Set(["failed", "warning", "retry_required", "needs_attention"]);
 
 const STOP_PROGRESS_MESSAGES: Record<string, string> = {
@@ -39,6 +40,13 @@ export function targetAudioMuted(job: {
   return Boolean(preferences && preferences.mute_target_audio === true);
 }
 
+export function recordMicrophoneEnabled(job: {
+  metadata_json?: JobMetadataJson;
+}) {
+  const preferences = job.metadata_json?.session_preferences;
+  return Boolean(preferences && preferences.record_microphone === true);
+}
+
 export function canToggleTargetAudioMute(job: {
   state: string;
   capture_backend: string;
@@ -49,6 +57,13 @@ export function canToggleTargetAudioMute(job: {
     ["application", "window"].includes(job.capture_target.kind ?? "") &&
     MUTE_TOGGLE_STATES.has(job.state)
   );
+}
+
+export function canToggleMicrophoneRecording(job: {
+  state: string;
+  capture_backend: string;
+}) {
+  return job.capture_backend === "macos_local" && MICROPHONE_TOGGLE_STATES.has(job.state);
 }
 
 export function readableState(value: string) {
