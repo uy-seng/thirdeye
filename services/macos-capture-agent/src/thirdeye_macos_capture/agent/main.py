@@ -37,13 +37,23 @@ class AudioFanout(FifoAudioFanout):
 
 app = FastAPI(title="macOS Capture Agent")
 runtime = MacOSCaptureRuntime()
-fanout = AudioFanout(Path(os.environ.get("MACOS_CAPTURE_RUNTIME_DIR", "/tmp/macos-capture-runtime")) / "live_audio.pcm")
+runtime_dir = Path(os.environ.get("MACOS_CAPTURE_RUNTIME_DIR", "/tmp/macos-capture-runtime"))
+fanout = AudioFanout(runtime_dir / "live_audio.pcm")
+microphone_fanout = AudioFanout(runtime_dir / "microphone_audio.pcm")
 
 
 def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ScreenCapturePermissionError):
         return HTTPException(status_code=503, detail=str(exc))
     return HTTPException(status_code=500, detail=str(exc))
+
+
+def _fanout_for_source(source: str) -> AudioFanout:
+    if source == "system":
+        return fanout
+    if source == "microphone":
+        return microphone_fanout
+    raise HTTPException(status_code=400, detail="audio source must be system or microphone")
 
 
 @app.get("/health")
@@ -107,6 +117,9 @@ async def start_live_audio(request: CommandRequest) -> JSONResponse:
         )
         fanout.reset()
         fanout.ensure_running()
+        microphone_fanout.reset()
+        if request.record_microphone:
+            microphone_fanout.ensure_running()
     except Exception as exc:
         raise _http_error(exc) from exc
     return JSONResponse(payload)
@@ -121,6 +134,7 @@ async def stop_live_audio(request: CommandRequest) -> JSONResponse:
     except Exception as exc:
         raise _http_error(exc) from exc
     fanout.reset()
+    microphone_fanout.reset()
     return JSONResponse(payload)
 
 
@@ -149,12 +163,16 @@ async def set_record_microphone_enabled(request: CommandRequest) -> JSONResponse
             request.target.model_dump(),
             request.record_microphone,
         )
+        microphone_fanout.reset()
+        if request.record_microphone:
+            microphone_fanout.ensure_running()
     except Exception as exc:
         raise _http_error(exc) from exc
     return JSONResponse(payload)
 
 
 @app.get("/live-audio/stream")
-async def stream_live_audio(job_id: str) -> StreamingResponse:
-    fanout.ensure_running()
-    return StreamingResponse(fanout.stream(), media_type="application/octet-stream")
+async def stream_live_audio(job_id: str, source: str = "system") -> StreamingResponse:
+    selected_fanout = _fanout_for_source(source)
+    selected_fanout.ensure_running()
+    return StreamingResponse(selected_fanout.stream(), media_type="application/octet-stream")

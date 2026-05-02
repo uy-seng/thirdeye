@@ -49,10 +49,25 @@ async def iter_live_stream_events(runtime: AppRuntime, job_id: str) -> AsyncIter
     job = runtime.jobs.get_job(job_id)
     snapshot = runtime.transcript_store.snapshot(job_id)
     yield {"type": "status", "state": job.state}
-    for block in snapshot["final_blocks"]:
-        yield block
-    if snapshot["interim"]:
-        yield {"type": "interim", "text": snapshot["interim"]}
+    sources = snapshot.get("sources")
+    if isinstance(sources, dict):
+        for source in ("system", "microphone"):
+            source_snapshot = sources.get(source)
+            if not isinstance(source_snapshot, dict):
+                continue
+            for block in source_snapshot.get("final_blocks", []):
+                yield block
+            interim = source_snapshot.get("interim")
+            if interim:
+                payload = {"type": "interim", "text": interim}
+                if source == "microphone":
+                    payload["source"] = source
+                yield payload
+    else:
+        for block in snapshot["final_blocks"]:
+            yield block
+        if snapshot["interim"]:
+            yield {"type": "interim", "text": snapshot["interim"]}
     queue = runtime.transcript_hub.subscribe(job_id)
     try:
         while True:

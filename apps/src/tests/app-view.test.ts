@@ -14,6 +14,7 @@ const captureTargetsSource = readFileSync(join(testDir, "../features/capture/cap
 const permissionNoticeSource = readFileSync(join(testDir, "../features/capture/ScreenRecordingPermissionNotice.tsx"), "utf8");
 const jobDetailSource = readFileSync(join(testDir, "../features/jobs/JobDetail.tsx"), "utf8");
 const liveControlsSource = readFileSync(join(testDir, "../features/live/LiveCaptureControls.tsx"), "utf8");
+const liveTranscriptSource = readFileSync(join(testDir, "../features/live/LiveTranscript.tsx"), "utf8");
 const liveSummarySource = readFileSync(join(testDir, "../features/live/LiveSummaryPanel.tsx"), "utf8");
 const voiceNotesSource = readFileSync(join(testDir, "../features/voice-notes/VoiceNotesPanel.tsx"), "utf8");
 const promptModulePath = join(testDir, "../lib/prompts.ts");
@@ -269,6 +270,14 @@ test("live view exposes a runtime app mute toggle for active captures", () => {
   assert.match(liveControlsSource, /canToggleMicrophoneRecording/);
   assert.match(liveControlsSource, /targetAudioMuted/);
   assert.match(liveControlsSource, /recordMicrophoneEnabled/);
+});
+
+test("live transcript splits system audio and microphone into separate sections", () => {
+  assert.match(liveTranscriptSource, /System audio/);
+  assert.match(liveTranscriptSource, /Self/);
+  assert.doesNotMatch(liveTranscriptSource, /label: "Microphone"/);
+  assert.match(liveTranscriptSource, /source === "microphone"/);
+  assert.match(liveTranscriptSource, /source === "system"/);
 });
 
 test("voice notes are available as a separate recording workspace", () => {

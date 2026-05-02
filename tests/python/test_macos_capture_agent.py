@@ -81,6 +81,18 @@ class StubFanout:
         self.calls.append("ensure")
 
 
+class StreamingStubFanout:
+    def __init__(self, chunk: bytes) -> None:
+        self.chunk = chunk
+        self.ensure_calls = 0
+
+    def ensure_running(self) -> None:
+        self.ensure_calls += 1
+
+    async def stream(self):
+        yield self.chunk
+
+
 def test_targets_endpoint_returns_runtime_targets(monkeypatch) -> None:
     runtime = StubRuntime()
     monkeypatch.setattr(agent_main, "runtime", runtime)
@@ -399,6 +411,21 @@ def test_record_microphone_endpoint_forwards_runtime_request(monkeypatch) -> Non
             True,
         )
     ]
+
+
+def test_live_audio_stream_can_read_microphone_source(monkeypatch) -> None:
+    system_fanout = StreamingStubFanout(b"system")
+    microphone_fanout = StreamingStubFanout(b"mic")
+    monkeypatch.setattr(agent_main, "fanout", system_fanout)
+    monkeypatch.setattr(agent_main, "microphone_fanout", microphone_fanout, raising=False)
+
+    with TestClient(agent_main.app) as client:
+        response = client.get("/live-audio/stream?job_id=job-123&source=microphone")
+
+    assert response.status_code == 200
+    assert response.content == b"mic"
+    assert system_fanout.ensure_calls == 0
+    assert microphone_fanout.ensure_calls == 1
 
 
 def test_audio_fanout_emits_silence_when_fifo_is_idle(tmp_path) -> None:

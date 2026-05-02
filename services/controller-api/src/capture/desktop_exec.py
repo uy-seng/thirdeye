@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 from pathlib import Path
 from typing import Any, AsyncIterator, Protocol
+from urllib.parse import urlencode
 
 import httpx
 
@@ -46,7 +47,7 @@ class CaptureClientProtocol(Protocol):
         record_microphone: bool,
     ) -> dict[str, Any]: ...
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]: ...
-    async def stream_live_audio(self, job_id: str) -> AsyncIterator[bytes]: ...
+    async def stream_live_audio(self, job_id: str, source: str = "system") -> AsyncIterator[bytes]: ...
 
 
 DesktopClientProtocol = CaptureClientProtocol
@@ -186,9 +187,10 @@ class HttpCaptureClient:
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         return await self._post("/live-audio/stop", {"job_id": job_id, "target": target})
 
-    async def stream_live_audio(self, job_id: str) -> AsyncIterator[bytes]:
+    async def stream_live_audio(self, job_id: str, source: str = "system") -> AsyncIterator[bytes]:
+        query = urlencode({"job_id": job_id, "source": source})
         async with httpx.AsyncClient(base_url=self.base_url, timeout=None) as client:
-            async with client.stream("GET", f"/live-audio/stream?job_id={job_id}") as response:
+            async with client.stream("GET", f"/live-audio/stream?{query}") as response:
                 response.raise_for_status()
                 async for chunk in response.aiter_bytes():
                     yield chunk
@@ -291,10 +293,11 @@ class FakeCaptureClient:
         self._running_live_audio = False
         return {"pid": self._live_audio_pid}
 
-    async def stream_live_audio(self, job_id: str) -> AsyncIterator[bytes]:
+    async def stream_live_audio(self, job_id: str, source: str = "system") -> AsyncIterator[bytes]:
+        chunk = b"\x00\x02" * 64 if source == "microphone" else b"\x00\x01" * 64
         for _ in range(3):
             await asyncio.sleep(0.05)
-            yield b"\x00\x01" * 64
+            yield chunk
 
 
 class FakeDesktopClient(FakeCaptureClient):

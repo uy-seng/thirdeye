@@ -71,6 +71,7 @@ class MacOSCaptureRuntime:
             raise MacOSCaptureRuntimeError("output_file is required")
         target_payload = CaptureTarget.model_validate(target).model_dump_json()
         fifo_path = self.runtime_dir / "live_audio.pcm"
+        microphone_fifo_path = self.runtime_dir / "microphone_audio.pcm"
         pid_file = self.runtime_dir / "recording.pid"
         stop_file = self.runtime_dir / "recording.stop"
         log_file = self.runtime_dir / "recording.log"
@@ -80,6 +81,8 @@ class MacOSCaptureRuntime:
             output_file,
             "--fifo-path",
             str(fifo_path),
+            "--microphone-fifo-path",
+            str(microphone_fifo_path),
             "--stop-file",
             str(stop_file),
             "--mute-command-file",
@@ -103,7 +106,13 @@ class MacOSCaptureRuntime:
             log_file,
             startup_grace_seconds=float(os.environ.get("MACOS_CAPTURE_RECORDING_STARTUP_GRACE_SECONDS", "1.0")),
         )
-        return {"pid": read_pid(pid_file), "output_file": output_file, "log_file": str(log_file)}
+        return {
+            "pid": read_pid(pid_file),
+            "output_file": output_file,
+            "fifo_path": str(fifo_path),
+            "microphone_fifo_path": str(microphone_fifo_path),
+            "log_file": str(log_file),
+        }
 
     async def stop_recording(self, job_id: str, output_file: str | None, target: dict[str, Any]) -> dict[str, Any]:
         pid_file = self.runtime_dir / "recording.pid"
@@ -119,6 +128,7 @@ class MacOSCaptureRuntime:
         record_microphone: bool = False,
     ) -> dict[str, Any]:
         fifo_path = self.runtime_dir / "live_audio.pcm"
+        microphone_fifo_path = self.runtime_dir / "microphone_audio.pcm"
         target_payload = CaptureTarget.model_validate(target).model_dump_json()
         pid_file = self.runtime_dir / "live-audio.pid"
         stop_file = self.runtime_dir / "live-audio.stop"
@@ -132,6 +142,7 @@ class MacOSCaptureRuntime:
             return {
                 "pid": recording_pid,
                 "fifo_path": str(fifo_path),
+                "microphone_fifo_path": str(microphone_fifo_path),
                 "log_file": str(self.runtime_dir / "recording.log"),
             }
 
@@ -139,6 +150,8 @@ class MacOSCaptureRuntime:
             "live-audio",
             "--fifo-path",
             str(fifo_path),
+            "--microphone-fifo-path",
+            str(microphone_fifo_path),
             "--stop-file",
             str(stop_file),
             "--mute-command-file",
@@ -162,7 +175,7 @@ class MacOSCaptureRuntime:
             log_file,
             startup_grace_seconds=float(os.environ.get("MACOS_CAPTURE_LIVE_AUDIO_STARTUP_GRACE_SECONDS", "0.05")),
         )
-        return {"pid": read_pid(pid_file), "fifo_path": str(fifo_path), "log_file": str(log_file)}
+        return {"pid": read_pid(pid_file), "fifo_path": str(fifo_path), "microphone_fifo_path": str(microphone_fifo_path), "log_file": str(log_file)}
 
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         pid_file = self.runtime_dir / "live-audio.pid"

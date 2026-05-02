@@ -355,6 +355,24 @@ class CaptureRuntime:
         next_preferences[key] = value
         return self.jobs.update_metadata(job.id, session_preferences=next_preferences)
 
+    @staticmethod
+    def _relay_job_options(job: JobResponse) -> dict[str, Any]:
+        return {
+            "model": job.deepgram_model,
+            "language": job.deepgram_language,
+            "diarize": job.diarize,
+            "smart_format": job.smart_format,
+            "interim_results": job.interim_results,
+        }
+
+    async def _start_deepgram_relay(self, job: JobResponse, backend, source: str) -> None:
+        await self.relay_manager.start(
+            job.id,
+            lambda: backend.stream_live_audio(job.id, source=source),
+            self._relay_job_options(job),
+            source=source,
+        )
+
     async def start_capture(self, payload: JobCreate) -> JobResponse:
         if self.jobs.active_job() is not None:
             raise CaptureConflictError("only one active capture is allowed")
@@ -389,17 +407,9 @@ class CaptureRuntime:
             live_audio_started = True
             job = self.jobs.update_runtime_fields(job.id, live_audio_pid=live_audio_response.get("pid"))
             self.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "live audio started")
-            await self.relay_manager.start(
-                job.id,
-                lambda: backend.stream_live_audio(job.id),
-                {
-                    "model": job.deepgram_model,
-                    "language": job.deepgram_language,
-                    "diarize": job.diarize,
-                    "smart_format": job.smart_format,
-                    "interim_results": job.interim_results,
-                },
-            )
+            await self._start_deepgram_relay(job, backend, "system")
+            if record_microphone:
+                await self._start_deepgram_relay(job, backend, "microphone")
             job = self.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "deepgram relay started")
             await self.transcript_hub.publish(job.id, {"type": "status", "state": job.state})
             self._supervisor_tasks[job.id] = asyncio.create_task(self._supervise(job.id))
@@ -528,6 +538,11 @@ class CaptureRuntime:
             raise CaptureMicrophoneError(self._failure_message(exc)) from exc
 
         updated = self._update_session_preference(job, "record_microphone", record_microphone)
+        if record_microphone:
+            if not self.relay_manager.is_running(job_id, source="microphone"):
+                await self._start_deepgram_relay(updated, backend, "microphone")
+        else:
+            await self.relay_manager.stop(job_id, source="microphone")
         with contextlib.suppress(Exception):
             await self.transcript_hub.publish(
                 job.id,
@@ -536,20 +551,12 @@ class CaptureRuntime:
         return updated
 
     async def restore_live_relay(self, job_id: str) -> None:
-        if not self.relay_manager.is_running(job_id):
-            job = self.jobs.get_job(job_id)
-            backend = self._backend_for_job(job)
-            await self.relay_manager.start(
-                job_id,
-                lambda: backend.stream_live_audio(job_id),
-                {
-                    "model": job.deepgram_model,
-                    "language": job.deepgram_language,
-                    "diarize": job.diarize,
-                    "smart_format": job.smart_format,
-                    "interim_results": job.interim_results,
-                },
-            )
+        job = self.jobs.get_job(job_id)
+        backend = self._backend_for_job(job)
+        if not self.relay_manager.is_running(job_id, source="system"):
+            await self._start_deepgram_relay(job, backend, "system")
+        if self._record_microphone_enabled(job) and not self.relay_manager.is_running(job_id, source="microphone"):
+            await self._start_deepgram_relay(job, backend, "microphone")
 
     async def dispatch_stop_capture(self, job_id: str, *, skip_summary: bool = False) -> JobResponse:
         self.jobs.get_job(job_id)

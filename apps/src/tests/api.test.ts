@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   API_BASE,
+  apiJson,
   apiUrl,
   artifactHref,
   deleteJob,
@@ -42,6 +43,48 @@ test("controller requests do not attach local authentication state", async () =>
     assert.equal(headers.has("authorization"), false);
     assert.equal(calls[0]?.init?.credentials, undefined);
     assert.equal(artifactHref("/artifacts/job/summary.md"), "http://127.0.0.1:8788/artifacts/job/summary.md");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("apiJson formats structured FastAPI validation errors", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({
+      detail: [
+        {
+          type: "extra_forbidden",
+          loc: ["body", "record_microphone"],
+          msg: "Extra inputs are not permitted",
+          input: true,
+        },
+      ],
+    }),
+    { headers: { "content-type": "application/json" }, status: 422 },
+  );
+
+  try {
+    await assert.rejects(
+      () => apiJson("/api/jobs/start", { method: "POST", body: JSON.stringify({ record_microphone: true }) }),
+      /record_microphone: Extra inputs are not permitted/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("apiJson explains local service connection failures", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError("Load failed");
+  };
+
+  try {
+    await assert.rejects(
+      () => apiJson("/api/jobs/start", { method: "POST", body: JSON.stringify({ title: "Capture" }) }),
+      /Could not connect to the local app service\. Restart the app and try again\./,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

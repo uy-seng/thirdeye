@@ -147,6 +147,7 @@ enum HelperCommand {
         outputFile: URL,
         recordsAudio: Bool,
         liveAudioFifoPath: URL?,
+        microphoneFifoPath: URL?,
         stopFile: URL?,
         muteCommandFile: URL?,
         muteStateFile: URL?,
@@ -158,6 +159,7 @@ enum HelperCommand {
     )
     case liveAudio(
         fifoPath: URL,
+        microphoneFifoPath: URL?,
         stopFile: URL?,
         muteCommandFile: URL?,
         muteStateFile: URL?,
@@ -182,6 +184,7 @@ enum HelperCommand {
                 outputFile: URL(fileURLWithPath: try value(named: "--output-file", in: arguments)),
                 recordsAudio: !arguments.contains("--video-only"),
                 liveAudioFifoPath: optionalValue(named: "--fifo-path", in: arguments).map { URL(fileURLWithPath: $0) },
+                microphoneFifoPath: optionalValue(named: "--microphone-fifo-path", in: arguments).map { URL(fileURLWithPath: $0) },
                 stopFile: optionalValue(named: "--stop-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 muteCommandFile: optionalValue(named: "--mute-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 muteStateFile: optionalValue(named: "--mute-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
@@ -194,6 +197,7 @@ enum HelperCommand {
         case "live-audio":
             return .liveAudio(
                 fifoPath: URL(fileURLWithPath: try value(named: "--fifo-path", in: arguments)),
+                microphoneFifoPath: optionalValue(named: "--microphone-fifo-path", in: arguments).map { URL(fileURLWithPath: $0) },
                 stopFile: optionalValue(named: "--stop-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 muteCommandFile: optionalValue(named: "--mute-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 muteStateFile: optionalValue(named: "--mute-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
@@ -261,23 +265,23 @@ struct ResolvedTarget {
 }
 
 enum CaptureMode {
-    case record(outputFile: URL, recordsAudio: Bool, liveAudioFifoPath: URL?, muteTargetAudio: Bool, recordMicrophone: Bool)
-    case liveAudio(fifoPath: URL, muteTargetAudio: Bool, recordMicrophone: Bool)
+    case record(outputFile: URL, recordsAudio: Bool, liveAudioFifoPath: URL?, microphoneFifoPath: URL?, muteTargetAudio: Bool, recordMicrophone: Bool)
+    case liveAudio(fifoPath: URL, microphoneFifoPath: URL?, muteTargetAudio: Bool, recordMicrophone: Bool)
 
     var muteTargetAudio: Bool {
         switch self {
-        case .record(_, _, _, let muteTargetAudio, _):
+        case .record(_, _, _, _, let muteTargetAudio, _):
             return muteTargetAudio
-        case .liveAudio(_, let muteTargetAudio, _):
+        case .liveAudio(_, _, let muteTargetAudio, _):
             return muteTargetAudio
         }
     }
 
     var recordMicrophone: Bool {
         switch self {
-        case .record(_, _, _, _, let recordMicrophone):
+        case .record(_, _, _, _, _, let recordMicrophone):
             return recordMicrophone
-        case .liveAudio(_, _, let recordMicrophone):
+        case .liveAudio(_, _, _, let recordMicrophone):
             return recordMicrophone
         }
     }
@@ -720,6 +724,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var liveAudioFileDescriptor: Int32?
+    private var microphoneAudioFileDescriptor: Int32?
     private var liveAudioConverter: AVAudioConverter?
     private var liveAudioSourceFormat: AVAudioFormat?
     private var recordingAudioFormat: AVAudioFormat?
@@ -776,7 +781,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
             muteTargetAudio: targetAudioMuted,
             recordMicrophone: recordMicrophone
         )
-        if case .record(let outputFile, let recordsAudio, let liveAudioFifoPath, _, _) = mode {
+        if case .record(let outputFile, let recordsAudio, let liveAudioFifoPath, let microphoneFifoPath, _, _) = mode {
             try prepareWriter(
                 outputFile: outputFile,
                 width: resolved.width,
@@ -786,11 +791,17 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
                 recordsAudio: recordsAudio || recordMicrophone
             )
             if let liveAudioFifoPath {
-                try prepareFIFO(at: liveAudioFifoPath)
+                liveAudioFileDescriptor = try prepareFIFO(at: liveAudioFifoPath)
+            }
+            if let microphoneFifoPath {
+                microphoneAudioFileDescriptor = try prepareFIFO(at: microphoneFifoPath)
             }
         }
-        if case .liveAudio(let fifoPath, _, _) = mode {
-            try prepareFIFO(at: fifoPath)
+        if case .liveAudio(let fifoPath, let microphoneFifoPath, _, _) = mode {
+            liveAudioFileDescriptor = try prepareFIFO(at: fifoPath)
+            if let microphoneFifoPath {
+                microphoneAudioFileDescriptor = try prepareFIFO(at: microphoneFifoPath)
+            }
         }
 
         if targetAudioMuted {
@@ -849,6 +860,10 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         if let fileDescriptor = liveAudioFileDescriptor {
             close(fileDescriptor)
             liveAudioFileDescriptor = nil
+        }
+        if let fileDescriptor = microphoneAudioFileDescriptor {
+            close(fileDescriptor)
+            microphoneAudioFileDescriptor = nil
         }
 
         if let writer {
@@ -956,8 +971,10 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         case .record:
             appendRecordingSample(sampleBuffer, outputType: outputType)
         case .liveAudio:
-            if outputType == .audio || Self.isMicrophoneOutput(outputType) {
+            if outputType == .audio {
                 writeLiveAudioSample(sampleBuffer)
+            } else if Self.isMicrophoneOutput(outputType) {
+                writeMicrophoneAudioSample(sampleBuffer)
             }
         }
     }
@@ -971,7 +988,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         if Self.isMicrophoneOutput(outputType) {
             appendRecordingAudioSample(sampleBuffer, failurePrefix: "microphone recording audio append failed")
-            writeLiveAudioSample(sampleBuffer)
+            writeMicrophoneAudioSample(sampleBuffer)
             return
         }
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
@@ -1064,6 +1081,17 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private func writeLiveAudioSample(_ sampleBuffer: CMSampleBuffer) {
         guard let fileDescriptor = liveAudioFileDescriptor,
+              let data = liveAudioLinear16Data(from: sampleBuffer),
+              !data.isEmpty else {
+            return
+        }
+        audioWriteQueue.async {
+            Self.writeAll(data, to: fileDescriptor)
+        }
+    }
+
+    private func writeMicrophoneAudioSample(_ sampleBuffer: CMSampleBuffer) {
+        guard let fileDescriptor = microphoneAudioFileDescriptor,
               let data = liveAudioLinear16Data(from: sampleBuffer),
               !data.isEmpty else {
             return
@@ -1384,7 +1412,11 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
               audioBuffer.mDataByteSize > 0 else {
             return nil
         }
-        return Data(bytes: audioData, count: Int(audioBuffer.mDataByteSize))
+        let liveAudioByteCount = Int(outputBuffer.frameLength) * Int(outputBuffer.format.streamDescription.pointee.mBytesPerFrame)
+        guard liveAudioByteCount > 0 else {
+            return nil
+        }
+        return Data(bytes: audioData, count: liveAudioByteCount)
     }
 
     private func liveAudioConverter(for sourceFormat: AVAudioFormat) -> AVAudioConverter? {
@@ -1471,7 +1503,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         self.audioInput = audioInput
     }
 
-    private func prepareFIFO(at fifoPath: URL) throws {
+    private func prepareFIFO(at fifoPath: URL) throws -> Int32 {
         let directory = fifoPath.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         unlink(fifoPath.path)
@@ -1482,7 +1514,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         if fileDescriptor < 0 {
             throw HelperError.writerFailed("failed to open live audio fifo at \(fifoPath.path)")
         }
-        liveAudioFileDescriptor = fileDescriptor
+        return fileDescriptor
     }
 
     private static func makeConfiguration(
@@ -1512,7 +1544,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private static func hasAudioOutput(for mode: CaptureMode) -> Bool {
         switch mode {
-        case .record(_, let recordsAudio, let liveAudioFifoPath, _, _):
+        case .record(_, let recordsAudio, let liveAudioFifoPath, _, _, _):
             return recordsAudio || liveAudioFifoPath != nil
         case .liveAudio:
             return true
@@ -1737,6 +1769,7 @@ func runStream(command: HelperCommand) async throws {
         let outputFile,
         let recordsAudio,
         let liveAudioFifoPath,
+        let microphoneFifoPath,
         let commandStopFile,
         let commandMuteFile,
         let commandMuteStateFile,
@@ -1751,6 +1784,7 @@ func runStream(command: HelperCommand) async throws {
             outputFile: outputFile,
             recordsAudio: recordsAudio,
             liveAudioFifoPath: liveAudioFifoPath,
+            microphoneFifoPath: microphoneFifoPath,
             muteTargetAudio: muteTargetAudio,
             recordMicrophone: recordMicrophone
         )
@@ -1761,6 +1795,7 @@ func runStream(command: HelperCommand) async throws {
         microphoneStateFile = commandMicrophoneStateFile
     case .liveAudio(
         let fifoPath,
+        let microphoneFifoPath,
         let commandStopFile,
         let commandMuteFile,
         let commandMuteStateFile,
@@ -1771,7 +1806,7 @@ func runStream(command: HelperCommand) async throws {
         let recordMicrophone
     ):
         target = captureTarget
-        mode = .liveAudio(fifoPath: fifoPath, muteTargetAudio: muteTargetAudio, recordMicrophone: recordMicrophone)
+        mode = .liveAudio(fifoPath: fifoPath, microphoneFifoPath: microphoneFifoPath, muteTargetAudio: muteTargetAudio, recordMicrophone: recordMicrophone)
         stopFile = commandStopFile
         muteCommandFile = commandMuteFile
         muteStateFile = commandMuteStateFile

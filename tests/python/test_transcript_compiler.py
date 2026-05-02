@@ -69,6 +69,90 @@ def test_compiler_emits_text_markdown_and_json(tmp_path: Path) -> None:
     assert payload["segments"][0]["speaker"] == 1
 
 
+def test_compiler_writes_system_and_self_transcripts_as_separate_sections(tmp_path: Path) -> None:
+    events_path = tmp_path / "deepgram-events.jsonl"
+    raw_events = [
+        {"type": "Metadata", "source": "system", "request_id": "req-system", "model_info": {"name": "nova-3"}},
+        {
+            "type": "Results",
+            "source": "system",
+            "is_final": True,
+            "start": 3.0,
+            "duration": 1.25,
+            "channel": {
+                "alternatives": [
+                    {
+                        "transcript": "System answer",
+                        "words": [{"speaker": 2, "start": 3.0, "end": 4.25}],
+                    }
+                ]
+            },
+        },
+        {"type": "Metadata", "source": "microphone", "request_id": "req-self", "model_info": {"name": "nova-3"}},
+        {
+            "type": "Results",
+            "source": "microphone",
+            "is_final": True,
+            "start": 1.0,
+            "duration": 1.0,
+            "channel": {
+                "alternatives": [
+                    {
+                        "transcript": "My question",
+                        "words": [{"speaker": 0, "start": 1.0, "end": 2.0}],
+                    }
+                ]
+            },
+        },
+        {
+            "type": "Results",
+            "source": "system",
+            "is_final": True,
+            "start": 5.0,
+            "duration": 1.0,
+            "channel": {
+                "alternatives": [
+                    {
+                        "transcript": "System follow up",
+                        "words": [{"speaker": 3, "start": 5.0, "end": 6.0}],
+                    }
+                ]
+            },
+        },
+    ]
+    events_path.write_text(
+        "\n".join(json.dumps(item) for item in raw_events) + "\n",
+        encoding="utf-8",
+    )
+
+    compiler = TranscriptCompiler()
+    result = compiler.compile(
+        job_id="job-sources",
+        title="Authorized public stream",
+        started_at="2026-04-17T18:00:00Z",
+        stopped_at="2026-04-17T18:05:00Z",
+        model="nova-3",
+        language="en",
+        events_path=events_path,
+        output_dir=tmp_path,
+    )
+
+    text = result.text_path.read_text(encoding="utf-8")
+    system_header = text.index("System Recording")
+    system_answer = text.index("Speaker 2: System answer")
+    system_follow_up = text.index("Speaker 3: System follow up")
+    self_header = text.index("Self")
+    self_line = text.index("Self: My question")
+
+    assert system_header < system_answer < system_follow_up < self_header < self_line
+    assert "Speaker 0: My question" not in text
+
+    markdown = result.markdown_path.read_text(encoding="utf-8")
+    assert "## System Recording" in markdown
+    assert "## Self" in markdown
+    assert "- [00:01.000 - 00:02.000] Self: My question" in markdown
+
+
 def test_compiler_handles_missing_events_file(tmp_path: Path) -> None:
     compiler = TranscriptCompiler()
     result = compiler.compile(

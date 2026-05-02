@@ -1,4 +1,4 @@
-import type { JobDetailResponse, TranscriptBlock } from "./types";
+import type { JobDetailResponse, LiveTranscriptSource, TranscriptBlock } from "./types";
 
 export type InitialReplayState = {
   pendingDraft: string | null;
@@ -68,7 +68,20 @@ export function shouldClearLiveDraft(event: TranscriptBlock) {
   return event.type === "utterance_end" || event.type === "metadata" || event.type === "complete";
 }
 
-export function createInitialReplayState(snapshot: JobDetailResponse["live_snapshot"]): InitialReplayState {
+export function createInitialReplayState(snapshot: JobDetailResponse["live_snapshot"], source: LiveTranscriptSource = "system"): InitialReplayState {
+  const sourceSnapshot = snapshot.sources?.[source];
+  if (sourceSnapshot) {
+    return {
+      pendingDraft: sourceSnapshot.interim || null,
+      pendingFinalBlocks: sourceSnapshot.final_blocks.length,
+    };
+  }
+  if (source === "microphone") {
+    return {
+      pendingDraft: null,
+      pendingFinalBlocks: 0,
+    };
+  }
   return {
     pendingDraft: snapshot.interim || null,
     pendingFinalBlocks: snapshot.final_blocks.length,

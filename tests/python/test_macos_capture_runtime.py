@@ -292,6 +292,8 @@ def test_start_recording_uses_recording_helper(tmp_path: Path, monkeypatch) -> N
         str(tmp_path / "recording.mp4"),
         "--fifo-path",
         str(tmp_path / "live_audio.pcm"),
+        "--microphone-fifo-path",
+        str(tmp_path / "microphone_audio.pcm"),
         "--stop-file",
         str(tmp_path / "recording.stop"),
         "--mute-command-file",
@@ -397,7 +399,12 @@ def test_start_live_audio_reuses_recording_helper_fifo(tmp_path: Path, monkeypat
     )
 
     assert captured == []
-    assert payload == {"pid": recording_pid, "fifo_path": str(tmp_path / "live_audio.pcm"), "log_file": str(tmp_path / "recording.log")}
+    assert payload == {
+        "pid": recording_pid,
+        "fifo_path": str(tmp_path / "live_audio.pcm"),
+        "microphone_fifo_path": str(tmp_path / "microphone_audio.pcm"),
+        "log_file": str(tmp_path / "recording.log"),
+    }
     assert (tmp_path / "live-audio.pid").read_text(encoding="utf-8") == str(recording_pid)
     assert (tmp_path / "live-audio.reused-recording").read_text(encoding="utf-8") == str(recording_pid)
 
@@ -477,6 +484,8 @@ def test_start_live_audio_uses_dedicated_audio_helper_without_recording(tmp_path
         "live-audio",
         "--fifo-path",
         str(tmp_path / "live_audio.pcm"),
+        "--microphone-fifo-path",
+        str(tmp_path / "microphone_audio.pcm"),
         "--stop-file",
         str(tmp_path / "live-audio.stop"),
         "--mute-command-file",
@@ -491,7 +500,12 @@ def test_start_live_audio_uses_dedicated_audio_helper_without_recording(tmp_path
         '{"id":"display:1","kind":"display","label":"Display 1","app_bundle_id":null,"app_name":null,"app_pid":null,"window_id":null,"display_id":"1"}',
     ]
     assert captured["pid_file"] == tmp_path / "live-audio.pid"
-    assert payload == {"pid": 5678, "fifo_path": str(tmp_path / "live_audio.pcm"), "log_file": str(tmp_path / "live-audio.log")}
+    assert payload == {
+        "pid": 5678,
+        "fifo_path": str(tmp_path / "live_audio.pcm"),
+        "microphone_fifo_path": str(tmp_path / "microphone_audio.pcm"),
+        "log_file": str(tmp_path / "live-audio.log"),
+    }
 
 
 def test_start_live_audio_passes_muted_app_audio_flag_to_helper(tmp_path: Path, monkeypatch) -> None:

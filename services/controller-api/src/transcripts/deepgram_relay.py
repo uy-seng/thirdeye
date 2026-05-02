@@ -11,6 +11,8 @@ from core.settings import Settings
 
 EventCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 DegradedCallback = Callable[[str, str], Awaitable[None]]
+RelaySource = str
+RelayKey = tuple[str, RelaySource]
 
 
 class RelayManager:
@@ -25,54 +27,101 @@ class RelayManager:
         self.deepgram_client = deepgram_client
         self.on_event = on_event
         self.on_degraded = on_degraded
-        self._tasks: dict[str, asyncio.Task[None]] = {}
-        self._stop_events: dict[str, asyncio.Event] = {}
+        self._tasks: dict[RelayKey, asyncio.Task[None]] = {}
+        self._stop_events: dict[RelayKey, asyncio.Event] = {}
 
-    def is_running(self, job_id: str) -> bool:
-        task = self._tasks.get(job_id)
-        return task is not None and not task.done()
+    def is_running(self, job_id: str, source: RelaySource | None = None) -> bool:
+        if source is not None:
+            task = self._tasks.get((job_id, source))
+            return task is not None and not task.done()
+        return any(key_job_id == job_id and not task.done() for (key_job_id, _), task in self._tasks.items())
 
-    async def start(self, job_id: str, stream_factory: Callable[[], Any], job_options: dict[str, Any]) -> None:
+    async def start(
+        self,
+        job_id: str,
+        stream_factory: Callable[[], Any],
+        job_options: dict[str, Any],
+        source: RelaySource = "system",
+    ) -> None:
+        key = (job_id, source)
+        if self.is_running(job_id, source):
+            return
         stop_event = asyncio.Event()
-        self._stop_events[job_id] = stop_event
-        task = asyncio.create_task(self._run(job_id, stream_factory, stop_event, job_options))
-        self._tasks[job_id] = task
+        self._stop_events[key] = stop_event
+        task = asyncio.create_task(self._run(job_id, stream_factory, stop_event, job_options, source))
+        task.add_done_callback(lambda _: self._cleanup_key(key))
+        self._tasks[key] = task
 
-    async def stop(self, job_id: str) -> None:
-        stop_event = self._stop_events.get(job_id)
-        if stop_event is not None:
-            stop_event.set()
-        task = self._tasks.get(job_id)
-        if task is not None:
-            await asyncio.wait([task], timeout=2.0)
+    async def stop(self, job_id: str, source: RelaySource | None = None) -> None:
+        keys = [(job_id, source)] if source is not None else [key for key in self._tasks if key[0] == job_id]
+        tasks: list[asyncio.Task[None]] = []
+        for key in keys:
+            stop_event = self._stop_events.get(key)
+            if stop_event is not None:
+                stop_event.set()
+            task = self._tasks.get(key)
+            if task is not None:
+                tasks.append(task)
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=2.0)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
 
-    async def _run(self, job_id: str, stream_factory: Callable[[], Any], stop_event: asyncio.Event, job_options: dict[str, Any]) -> None:
+    def _cleanup_key(self, key: RelayKey) -> None:
+        self._tasks.pop(key, None)
+        self._stop_events.pop(key, None)
+
+    @staticmethod
+    def _tag_event(source: RelaySource, event: dict[str, Any]) -> dict[str, Any]:
+        tagged = dict(event)
+        tagged["source"] = source
+        return tagged
+
+    async def _run(
+        self,
+        job_id: str,
+        stream_factory: Callable[[], Any],
+        stop_event: asyncio.Event,
+        job_options: dict[str, Any],
+        source: RelaySource,
+    ) -> None:
         if self.settings.fake_mode:
-            await self.on_event(job_id, {"type": "Metadata", "request_id": f"fake-{job_id}", "model_info": {"name": job_options["model"]}})
-            await asyncio.sleep(0.05)
             await self.on_event(
                 job_id,
-                {
-                    "type": "Results",
-                    "is_final": False,
-                    "start": 0.0,
-                    "duration": 0.7,
-                    "channel": {"alternatives": [{"transcript": "connecting to livestream", "words": [{"speaker": 1, "start": 0.0, "end": 0.7}]}]},
-                },
+                self._tag_event(source, {"type": "Metadata", "request_id": f"fake-{job_id}", "model_info": {"name": job_options["model"]}}),
             )
             await asyncio.sleep(0.05)
             await self.on_event(
                 job_id,
-                {
-                    "type": "Results",
-                    "is_final": True,
-                    "start": 0.0,
-                    "duration": 1.3,
-                    "channel": {"alternatives": [{"transcript": "public session started", "words": [{"speaker": 1, "start": 0.0, "end": 1.3}]}]},
-                },
+                self._tag_event(
+                    source,
+                    {
+                        "type": "Results",
+                        "is_final": False,
+                        "start": 0.0,
+                        "duration": 0.7,
+                        "channel": {"alternatives": [{"transcript": "connecting to livestream", "words": [{"speaker": 1, "start": 0.0, "end": 0.7}]}]},
+                    },
+                ),
             )
-            await self.on_event(job_id, {"type": "SpeechStarted", "timestamp": 0.0})
-            await self.on_event(job_id, {"type": "UtteranceEnd", "last_word_end": 1.3})
+            await asyncio.sleep(0.05)
+            await self.on_event(
+                job_id,
+                self._tag_event(
+                    source,
+                    {
+                        "type": "Results",
+                        "is_final": True,
+                        "start": 0.0,
+                        "duration": 1.3,
+                        "channel": {"alternatives": [{"transcript": "public session started", "words": [{"speaker": 1, "start": 0.0, "end": 1.3}]}]},
+                    },
+                ),
+            )
+            await self.on_event(job_id, self._tag_event(source, {"type": "SpeechStarted", "timestamp": 0.0}))
+            await self.on_event(job_id, self._tag_event(source, {"type": "UtteranceEnd", "last_word_end": 1.3}))
             await stop_event.wait()
             return
 
@@ -105,7 +154,7 @@ class RelayManager:
                 async for message in websocket:
                     if isinstance(message, bytes):
                         continue
-                    await self.on_event(job_id, json.loads(message))
+                    await self.on_event(job_id, self._tag_event(source, json.loads(message)))
             except Exception as exc:  # pragma: no cover - network
                 await self.on_degraded(job_id, str(exc))
 

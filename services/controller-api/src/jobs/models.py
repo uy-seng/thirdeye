@@ -295,6 +295,7 @@ class JobTransitionResponse(BaseModel):
 class LiveSnapshot(BaseModel):
     final_blocks: list[dict[str, Any]] = Field(default_factory=list)
     interim: str = ""
+    sources: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class HealthCheckResult(BaseModel):

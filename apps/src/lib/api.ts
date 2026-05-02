@@ -31,19 +31,75 @@ async function readPayload(response: Response) {
   return response.text();
 }
 
+function validationLocationText(value: unknown) {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value
+    .filter((item): item is string | number => typeof item === "string" || typeof item === "number")
+    .filter((item) => item !== "body" && item !== "query" && item !== "path")
+    .join(".");
+}
+
+function formatApiErrorDetail(detail: unknown): string {
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+        if (typeof item === "object" && item) {
+          const record = item as Record<string, unknown>;
+          const message = typeof record.msg === "string" ? record.msg : typeof record.message === "string" ? record.message : "";
+          if (!message) {
+            return "";
+          }
+          const location = validationLocationText(record.loc);
+          return location ? `${location}: ${message}` : message;
+        }
+        return "";
+      })
+      .filter(Boolean);
+    return messages.join("; ");
+  }
+  if (typeof detail === "object" && detail) {
+    const record = detail as Record<string, unknown>;
+    if (typeof record.msg === "string") {
+      return record.msg;
+    }
+    if (typeof record.message === "string") {
+      return record.message;
+    }
+    return JSON.stringify(detail);
+  }
+  return "";
+}
+
+function localServiceConnectionMessage() {
+  return "Could not connect to the local app service. Restart the app and try again.";
+}
+
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), {
+      ...init,
+      headers,
+    });
+  } catch {
+    throw new Error(localServiceConnectionMessage());
+  }
   const payload = await readPayload(response);
   if (!response.ok) {
     if (typeof payload === "object" && payload && "detail" in payload) {
-      throw new Error(String(payload.detail));
+      throw new Error(formatApiErrorDetail(payload.detail) || "Request failed.");
     }
     throw new Error(typeof payload === "string" && payload ? payload : "Request failed.");
   }

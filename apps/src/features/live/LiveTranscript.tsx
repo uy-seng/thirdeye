@@ -4,98 +4,184 @@ import { Badge, Card } from "../../components/ui";
 import { apiUrl } from "../../lib/api";
 import { readableState, stateTone } from "../../lib/job-state";
 import { advanceInitialReplayState, buildTranscriptFeed, createInitialReplayState, shouldClearLiveDraft, shouldRenderTranscriptLine } from "../../lib/live-transcript";
-import type { JobDetailResponse, TranscriptBlock } from "../../lib/types";
+import type { JobDetailResponse, LiveTranscriptSource, TranscriptBlock } from "../../lib/types";
 import { formatRange, formatTimestamp, isNearBottom } from "./transcriptFormatting";
 
+type SourceTranscriptState = {
+  finalBlocks: TranscriptBlock[];
+  interim: string;
+  interimSpeaker: number | null | undefined;
+  interimStart: number | undefined;
+  speech: string;
+};
+
+const transcriptSources: Array<{ source: LiveTranscriptSource; label: string }> = [
+  { source: "system", label: "System audio" },
+  { source: "microphone", label: "Self" },
+];
+
+function emptySourceState(): SourceTranscriptState {
+  return {
+    finalBlocks: [],
+    interim: "",
+    interimSpeaker: null,
+    interimStart: undefined,
+    speech: "Awaiting speech",
+  };
+}
+
+function sourceLabel(source: LiveTranscriptSource) {
+  return source === "system" ? "System audio" : "Self";
+}
+
+function transcriptSource(event: TranscriptBlock): LiveTranscriptSource {
+  return event.source === "microphone" ? "microphone" : "system";
+}
+
+function speakerLabel(source: LiveTranscriptSource, speaker: number | null | undefined) {
+  if (source === "microphone") {
+    return "Self";
+  }
+  return speaker !== null && speaker !== undefined ? `Speaker ${speaker}` : null;
+}
+
+function initialSourceState(job: JobDetailResponse | null, source: LiveTranscriptSource): SourceTranscriptState {
+  if (!job) {
+    return emptySourceState();
+  }
+
+  const sourceSnapshot = job.live_snapshot.sources?.[source];
+  const legacySnapshot = source === "system" ? job.live_snapshot : null;
+  const snapshot = sourceSnapshot ?? legacySnapshot;
+
+  return {
+    finalBlocks: snapshot?.final_blocks ?? [],
+    interim: snapshot?.interim ?? "",
+    interimSpeaker: null,
+    interimStart: undefined,
+    speech: "Awaiting speech",
+  };
+}
+
+function initialSourceStates(job: JobDetailResponse | null): Record<LiveTranscriptSource, SourceTranscriptState> {
+  return {
+    system: initialSourceState(job, "system"),
+    microphone: initialSourceState(job, "microphone"),
+  };
+}
+
 export function LiveTranscript({ job }: { job: JobDetailResponse | null }) {
-  const [finalBlocks, setFinalBlocks] = useState<TranscriptBlock[]>([]);
-  const [interim, setInterim] = useState("");
-  const [interimSpeaker, setInterimSpeaker] = useState<number | null | undefined>(null);
-  const [interimStart, setInterimStart] = useState<number | undefined>(undefined);
+  const [sourceStates, setSourceStates] = useState<Record<LiveTranscriptSource, SourceTranscriptState>>(() => initialSourceStates(null));
   const [streamMessage, setStreamMessage] = useState("Choose a job to view its transcript.");
   const [state, setState] = useState("idle");
-  const [speech, setSpeech] = useState("Awaiting speech");
-  const transcriptRef = useRef<HTMLDivElement | null>(null);
-  const shouldFollowRef = useRef(true);
-  const transcriptRows = useMemo(() => buildTranscriptFeed(interim, finalBlocks), [finalBlocks, interim]);
+  const transcriptRefs = useRef<Record<LiveTranscriptSource, HTMLDivElement | null>>({ system: null, microphone: null });
+  const shouldFollowRef = useRef<Record<LiveTranscriptSource, boolean>>({ system: true, microphone: true });
+  const transcriptRowsBySource = useMemo(
+    () => ({
+      system: buildTranscriptFeed(sourceStates.system.interim, sourceStates.system.finalBlocks),
+      microphone: buildTranscriptFeed(sourceStates.microphone.interim, sourceStates.microphone.finalBlocks),
+    }),
+    [sourceStates],
+  );
 
   useLayoutEffect(() => {
-    if (!shouldFollowRef.current || !transcriptRef.current) {
-      return;
+    for (const { source } of transcriptSources) {
+      const feed = transcriptRefs.current[source];
+      if (!shouldFollowRef.current[source] || !feed) {
+        continue;
+      }
+      feed.scrollTop = feed.scrollHeight;
     }
-    transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
-  }, [transcriptRows]);
+  }, [transcriptRowsBySource]);
 
   useEffect(() => {
-    shouldFollowRef.current = true;
-    setFinalBlocks(job?.live_snapshot.final_blocks ?? []);
-    setInterim(job?.live_snapshot.interim ?? "");
-    setInterimSpeaker(null);
-    setInterimStart(undefined);
+    shouldFollowRef.current = { system: true, microphone: true };
+    setSourceStates(initialSourceStates(job));
     setState(job?.state ?? "idle");
-    setSpeech("Awaiting speech");
     if (!job) return;
     setStreamMessage("Connecting to live transcript...");
-    let replay = createInitialReplayState(job.live_snapshot);
+    let replay = {
+      system: createInitialReplayState(job.live_snapshot, "system"),
+      microphone: createInitialReplayState(job.live_snapshot, "microphone"),
+    };
     const stream = new EventSource(apiUrl(`/api/jobs/${job.id}/live/stream`));
     stream.onopen = () => {
       setStreamMessage("Live transcript connected.");
     };
     stream.onmessage = (message) => {
       const event = JSON.parse(message.data) as TranscriptBlock;
-      shouldFollowRef.current = isNearBottom(transcriptRef.current);
+      const source = transcriptSource(event);
+      shouldFollowRef.current[source] = isNearBottom(transcriptRefs.current[source]);
+
+      const updateSourceState = (updater: (current: SourceTranscriptState) => SourceTranscriptState) => {
+        setSourceStates((current) => ({
+          ...current,
+          [source]: updater(current[source]),
+        }));
+      };
+
       if (event.type === "interim") {
-        const replayUpdate = advanceInitialReplayState(replay, event);
-        replay = replayUpdate.replay;
+        const replayUpdate = advanceInitialReplayState(replay[source], event);
+        replay = { ...replay, [source]: replayUpdate.replay };
         if (replayUpdate.skip) {
           return;
         }
-        setInterim(event.text ?? "");
-        setInterimSpeaker(event.speaker);
-        setInterimStart(event.start);
-        setSpeech("Speech detected");
-        setStreamMessage("Live draft updating.");
+        updateSourceState((current) => ({
+          ...current,
+          interim: event.text ?? "",
+          interimSpeaker: event.speaker,
+          interimStart: event.start,
+          speech: "Speech detected",
+        }));
+        setStreamMessage(`${sourceLabel(source)} draft updating.`);
       } else if (event.type === "final") {
-        const replayUpdate = advanceInitialReplayState(replay, event);
-        replay = replayUpdate.replay;
+        const replayUpdate = advanceInitialReplayState(replay[source], event);
+        replay = { ...replay, [source]: replayUpdate.replay };
         if (replayUpdate.skip) {
           return;
         }
-        setInterim("");
-        setInterimSpeaker(null);
-        setInterimStart(undefined);
-        if (event.text) {
-          setFinalBlocks((current) => [...current, event]);
-        }
-        setSpeech("Awaiting speech");
-        setStreamMessage("Transcript updated.");
+        updateSourceState((current) => ({
+          ...current,
+          finalBlocks: event.text ? [...current.finalBlocks, event] : current.finalBlocks,
+          interim: "",
+          interimSpeaker: null,
+          interimStart: undefined,
+          speech: "Awaiting speech",
+        }));
+        setStreamMessage(`${sourceLabel(source)} transcript updated.`);
       } else if (event.type === "status" && event.state) {
         setState(event.state);
         setStreamMessage("Live transcript connected.");
       } else if (event.type === "speech_started") {
-        setSpeech("Speech detected");
-        setStreamMessage("Listening for the next words.");
+        updateSourceState((current) => ({ ...current, speech: "Speech detected" }));
+        setStreamMessage(`${sourceLabel(source)} is listening.`);
       } else if (event.type === "utterance_end") {
-        setInterim("");
-        setInterimSpeaker(null);
-        setInterimStart(undefined);
-        setSpeech("Pause detected");
-        setStreamMessage("Waiting for the next speaker.");
+        updateSourceState((current) => ({
+          ...current,
+          interim: "",
+          interimSpeaker: null,
+          interimStart: undefined,
+          speech: "Pause detected",
+        }));
+        setStreamMessage(`${sourceLabel(source)} is waiting.`);
       } else if (event.type === "metadata") {
         if (shouldClearLiveDraft(event)) {
-          setInterim("");
-          setInterimSpeaker(null);
-          setInterimStart(undefined);
+          updateSourceState((current) => ({
+            ...current,
+            interim: "",
+            interimSpeaker: null,
+            interimStart: undefined,
+          }));
         }
         setStreamMessage(event.model ? `Connected to ${event.model}.` : "Connected to speech service.");
       } else if (event.type === "warning") {
         setStreamMessage(event.message ?? "Live transcript warning.");
       } else if (event.type === "complete") {
-        setInterim("");
-        setInterimSpeaker(null);
-        setInterimStart(undefined);
+        setSourceStates((current) => ({
+          system: { ...current.system, interim: "", interimSpeaker: null, interimStart: undefined, speech: "Capture complete" },
+          microphone: { ...current.microphone, interim: "", interimSpeaker: null, interimStart: undefined, speech: "Capture complete" },
+        }));
         setState(event.state ?? "completed");
-        setSpeech("Capture complete");
         setStreamMessage("Capture completed.");
       } else if (!shouldRenderTranscriptLine(event)) {
         setStreamMessage("Live transcript connected.");
@@ -117,25 +203,47 @@ export function LiveTranscript({ job }: { job: JobDetailResponse | null }) {
         {job ? <Badge tone={stateTone(state)}>{readableState(state)}</Badge> : null}
       </div>
       <div className="transcript-status-row">
-        <Badge tone={interim ? "info" : "neutral"}>{speech}</Badge>
         <span>{streamMessage}</span>
       </div>
-      <div className="transcript-feed" onScroll={() => {
-        shouldFollowRef.current = isNearBottom(transcriptRef.current);
-      }} ref={transcriptRef}>
-        {transcriptRows.length === 0 ? <p className="transcript-empty">Waiting for speech</p> : null}
-        {transcriptRows.map((row, index) => {
-          const speaker = row.kind === "draft" ? interimSpeaker : row.speaker;
-          const range = row.kind === "draft" ? formatTimestamp(interimStart) : formatRange(row.start, row.current);
+      <div className="transcript-sections">
+        {transcriptSources.map(({ source, label }) => {
+          const sourceState = sourceStates[source];
+          const transcriptRows = transcriptRowsBySource[source];
+          const isMicrophone = source === "microphone";
+          const isSystem = source === "system";
           return (
-            <article className={row.kind === "draft" ? "transcript-row transcript-row-draft" : "transcript-row"} key={`${row.kind}-${range}-${index}`}>
-              <div className="transcript-meta">
-                {speaker !== null && speaker !== undefined ? <span className="transcript-chip">Speaker {speaker}</span> : null}
-                {range ? <span className="transcript-chip">{range}</span> : null}
-                {row.kind === "draft" ? <span className="transcript-chip transcript-chip-live">Live draft</span> : null}
+            <section className={isMicrophone ? "transcript-source-section transcript-source-section-microphone" : "transcript-source-section"} key={source}>
+              <div className="transcript-source-heading">
+                <h3>{label}</h3>
+                <Badge tone={sourceState.interim ? "info" : isSystem ? "neutral" : "warn"}>{sourceState.speech}</Badge>
               </div>
-              <p className={row.kind === "draft" ? "transcript-interim" : "transcript-line"}>{row.text}</p>
-            </article>
+              <div
+                className="transcript-feed"
+                onScroll={() => {
+                  shouldFollowRef.current[source] = isNearBottom(transcriptRefs.current[source]);
+                }}
+                ref={(element) => {
+                  transcriptRefs.current[source] = element;
+                }}
+              >
+                {transcriptRows.length === 0 ? <p className="transcript-empty">Waiting for speech</p> : null}
+                {transcriptRows.map((row, index) => {
+                  const speaker = row.kind === "draft" ? sourceState.interimSpeaker : row.speaker;
+                  const speakerText = speakerLabel(source, speaker);
+                  const range = row.kind === "draft" ? formatTimestamp(sourceState.interimStart) : formatRange(row.start, row.current);
+                  return (
+                    <article className={row.kind === "draft" ? "transcript-row transcript-row-draft" : "transcript-row"} key={`${source}-${row.kind}-${range}-${index}`}>
+                      <div className="transcript-meta">
+                        {speakerText ? <span className="transcript-chip">{speakerText}</span> : null}
+                        {range ? <span className="transcript-chip">{range}</span> : null}
+                        {row.kind === "draft" ? <span className="transcript-chip transcript-chip-live">Live draft</span> : null}
+                      </div>
+                      <p className={row.kind === "draft" ? "transcript-interim" : "transcript-line"}>{row.text}</p>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
           );
         })}
       </div>

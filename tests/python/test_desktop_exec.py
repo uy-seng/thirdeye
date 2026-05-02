@@ -189,6 +189,53 @@ def test_set_record_microphone_enabled_posts_runtime_microphone_request(settings
     }
 
 
+def test_stream_live_audio_can_request_microphone_source(settings, monkeypatch) -> None:
+    from capture.desktop_exec import MacOSCaptureHttpClient
+
+    client = MacOSCaptureHttpClient(settings)
+    requested: dict[str, str] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_bytes(self):
+            yield b"mic"
+
+    class FakeStream:
+        async def __aenter__(self):
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def stream(self, method: str, path: str):
+            requested["method"] = method
+            requested["path"] = path
+            return FakeStream()
+
+    monkeypatch.setattr("capture.desktop_exec.httpx.AsyncClient", FakeClient)
+
+    chunks = asyncio.run(_collect_async(client.stream_live_audio("job-123", source="microphone")))
+
+    assert chunks == [b"mic"]
+    assert requested == {"method": "GET", "path": "/live-audio/stream?job_id=job-123&source=microphone"}
+
+
+async def _collect_async(iterator):
+    return [chunk async for chunk in iterator]
+
+
 def test_stop_recording_forwards_controller_local_output_path(settings, monkeypatch) -> None:
     client = DesktopHttpClient(settings)
     captured: dict[str, object] = {}
