@@ -72,6 +72,7 @@ class TranscriptPromptService:
         )
         summary_path = self.artifacts.job_paths(job_id).summary
         summary_path.write_text(self._normalize_markdown(markdown), encoding="utf-8")
+        self.artifacts.register_file(job_id, summary_path, content_type="text/markdown")
         self.artifacts.append_controller_event(
             job_id,
             {
@@ -137,7 +138,7 @@ class TranscriptPromptService:
 
     def _effective_summary_model(self, model: str | None) -> str:
         candidate = (model or "").strip()
-        if not candidate or candidate == "fake-summary":
+        if not candidate:
             return self.settings.openclaw_summary_model
         return candidate
 

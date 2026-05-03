@@ -32,11 +32,8 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
   const canMuteTargetAudio =
     backend === "macos_local" && !recordMicrophone && Boolean(selectedTarget && ["application", "window"].includes(selectedTarget.kind));
   const selectedTargetUnavailable = selectedTarget?.available === false;
-  const macCaptureBlocked = backend === "macos_local" && activeCaptures.length > 0;
+  const macCaptureBlocked = backend === "macos_local" && activeCaptures.some((job) => job.capture_backend === "macos_local");
   const muteTargetHelp = "This mutes the selected app while capture runs. The transcript and recording still receive audio.";
-  const muteTargetDisabledHelp = recordMicrophone
-    ? "Turn off microphone recording to use silent app capture."
-    : "Choose an app or window to use silent capture.";
 
   async function loadTargets(nextBackend = backend) {
     setMessage("");
@@ -77,7 +74,7 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
       return;
     }
     if (macCaptureBlocked) {
-      setMessage("Stop active captures before recording this Mac.");
+      setMessage("Stop the active This Mac capture before starting another.");
       return;
     }
     if (backend === "macos_local" && !selectedTarget) {
@@ -163,30 +160,24 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
               <small>Save a video file with the transcript.</small>
             </span>
           </label>
-          <label className="option-row">
-            <input
-              checked={recordMicrophone}
-              disabled={!canRecordMicrophone}
-              onChange={(event) => setRecordMicrophone(event.target.checked)}
-              type="checkbox"
-            />
-            <span>
-              <strong>Record microphone</strong>
-              <small>{canRecordMicrophone ? "Use your microphone without changing other apps." : "Microphone recording works with This Mac."}</small>
-            </span>
-          </label>
-          <label className="option-row">
-            <input
-              checked={muteTargetAudio}
-              disabled={!canMuteTargetAudio}
-              onChange={(event) => setMuteTargetAudio(event.target.checked)}
-              type="checkbox"
-            />
-            <span>
-              <strong>Mute this app for me</strong>
-              <small>{canMuteTargetAudio ? muteTargetHelp : muteTargetDisabledHelp}</small>
-            </span>
-          </label>
+          {canRecordMicrophone ? (
+            <label className="option-row">
+              <input checked={recordMicrophone} onChange={(event) => setRecordMicrophone(event.target.checked)} type="checkbox" />
+              <span>
+                <strong>Record microphone</strong>
+                <small>Use your microphone without changing other apps.</small>
+              </span>
+            </label>
+          ) : null}
+          {canMuteTargetAudio ? (
+            <label className="option-row">
+              <input checked={muteTargetAudio} onChange={(event) => setMuteTargetAudio(event.target.checked)} type="checkbox" />
+              <span>
+                <strong>Mute this app for me</strong>
+                <small>{muteTargetHelp}</small>
+              </span>
+            </label>
+          ) : null}
           <label className="option-row">
             <input checked={notifyOnInactivity} onChange={(event) => setNotifyOnInactivity(event.target.checked)} type="checkbox" />
             <span>

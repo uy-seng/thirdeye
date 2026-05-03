@@ -40,6 +40,9 @@ from jobs.models import (
     TranscriptSummarySaveRequest,
     VoiceNoteSummaryGenerateRequest,
     VoiceNoteSummaryGenerateResponse,
+    VoiceNoteImportRequest,
+    VoiceNoteUpdateRequest,
+    VoiceNoteUpsertRequest,
 )
 from api.runtime import AppRuntime, create_runtime
 from core.settings import Settings
@@ -83,30 +86,8 @@ async def iter_live_stream_events(runtime: AppRuntime, job_id: str) -> AsyncIter
         runtime.transcript_hub.unsubscribe(job_id, queue)
 
 
-async def handle_fake_voice_note_stream(websocket: WebSocket) -> None:
-    sent_interim = False
-    while True:
-        message = await websocket.receive()
-        if message["type"] == "websocket.disconnect":
-            return
-        if message.get("bytes") and not sent_interim:
-            sent_interim = True
-            await websocket.send_json({"type": "interim", "text": "voice note draft"})
-            continue
-        if message.get("text"):
-            with contextlib.suppress(json.JSONDecodeError):
-                payload = json.loads(message["text"])
-                if payload.get("type") == "Finalize":
-                    await websocket.send_json({"type": "final", "text": "voice note captured"})
-                    await websocket.send_json({"type": "complete"})
-                    return
-
-
 async def handle_voice_note_stream(runtime: AppRuntime, websocket: WebSocket) -> None:
     await websocket.accept()
-    if runtime.settings.fake_mode:
-        await handle_fake_voice_note_stream(websocket)
-        return
 
     deepgram = DeepgramClient(runtime.settings)
     try:
@@ -411,6 +392,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse({"detail": "OpenClaw LLM returned no text"}, status_code=502)
         return JSONResponse(response.model_dump())
 
+    def voice_note_payload(note) -> dict[str, Any]:
+        payload = note.model_dump()
+        payload["createdAt"] = payload.pop("created_at")
+        payload["durationMs"] = payload.pop("duration_ms")
+        payload["audioDataUrl"] = payload.pop("audio_data_url")
+        if payload.get("summary"):
+            payload["summary"]["generatedAt"] = payload["summary"].pop("generated_at")
+        return payload
+
+    @app.get("/api/voice-notes")
+    async def list_voice_notes() -> JSONResponse:
+        return JSONResponse([voice_note_payload(note) for note in runtime.voice_notes.list_notes()])
+
+    @app.post("/api/voice-notes")
+    async def upsert_voice_note(payload: VoiceNoteUpsertRequest) -> JSONResponse:
+        try:
+            note = runtime.voice_notes.upsert_note(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(voice_note_payload(note))
+
+    @app.patch("/api/voice-notes/{note_id}")
+    async def update_voice_note(note_id: str, payload: VoiceNoteUpdateRequest) -> JSONResponse:
+        try:
+            note = runtime.voice_notes.update_note(note_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="voice note not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(voice_note_payload(note))
+
+    @app.post("/api/voice-notes/import")
+    async def import_voice_notes(payload: VoiceNoteImportRequest) -> JSONResponse:
+        try:
+            notes = runtime.voice_notes.import_notes(payload.notes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse([voice_note_payload(note) for note in notes])
+
+    @app.delete("/api/voice-notes/{note_id}")
+    async def delete_voice_note(note_id: str) -> JSONResponse:
+        try:
+            note = runtime.voice_notes.delete_note(note_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="voice note not found") from exc
+        return JSONResponse(voice_note_payload(note))
+
     @app.post("/api/jobs/{job_id}/cleanup")
     async def cleanup_job(job_id: str) -> JSONResponse:
         try:
@@ -491,7 +519,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/artifacts/{job_id}/{filename}")
     async def artifact_download(job_id: str, filename: str) -> FileResponse:
-        path = runtime.artifacts.job_paths(job_id).root / filename
+        path = runtime.artifacts.path_for_download(job_id, filename)
+        if path is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
         return FileResponse(path)
 
     return app

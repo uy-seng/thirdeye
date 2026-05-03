@@ -1,20 +1,8 @@
 export const VOICE_NOTES_STORAGE_KEY = "thirdeye.voice-notes";
 
-export type VoiceNote = {
-  id: string;
-  title: string;
-  transcript: string;
-  createdAt: string;
-  durationMs: number;
-  audioDataUrl?: string;
-  summary?: VoiceNoteSummary;
-};
+import type { VoiceNote, VoiceNoteSummary } from "./types";
 
-export type VoiceNoteSummary = {
-  markdown: string;
-  provider: string;
-  generatedAt: string;
-};
+export type { VoiceNote, VoiceNoteSummary };
 
 export type VoiceNoteInput = {
   id: string;
@@ -87,7 +75,7 @@ export function createVoiceNote(input: VoiceNoteInput): VoiceNote {
   };
 }
 
-export function loadVoiceNotes(): VoiceNote[] {
+export function loadLegacyVoiceNotes(): VoiceNote[] {
   if (!storageAvailable()) {
     return [];
   }
@@ -105,16 +93,10 @@ export function loadVoiceNotes(): VoiceNote[] {
   }
 }
 
-export function saveVoiceNotes(notes: VoiceNote[]) {
-  if (!storageAvailable()) {
-    return;
+export function clearLegacyVoiceNotes() {
+  if (storageAvailable()) {
+    localStorage.removeItem(VOICE_NOTES_STORAGE_KEY);
   }
-
-  localStorage.setItem(VOICE_NOTES_STORAGE_KEY, JSON.stringify(notes));
-}
-
-export function deleteVoiceNote(noteId: string) {
-  saveVoiceNotes(loadVoiceNotes().filter((note) => note.id !== noteId));
 }
 
 export function formatVoiceNoteDuration(durationMs: number) {

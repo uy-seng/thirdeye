@@ -1,5 +1,7 @@
 # Enterprise Layout Refactor Design
 
+> Archival note: this April 2026 design mentions the legacy/development `apps/web` layout. That browser UI is no longer part of the current public runtime contract.
+
 ## Goal
 
 Move the repository to an enterprise-style monorepo layout while keeping the existing app behavior, command surface, and importable Python module names working.

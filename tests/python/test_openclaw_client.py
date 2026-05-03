@@ -150,7 +150,6 @@ class FlakyTimeoutAsyncClient:
 def test_generate_transcript_summary_uses_openclaw_model_and_string_input(monkeypatch) -> None:
     settings = Settings(
         openclaw_gateway_token="gateway-token",
-        fake_mode=True,
     )
     client = OpenClawClient(settings)
 
@@ -181,7 +180,6 @@ def test_generate_transcript_summary_uses_openclaw_model_and_string_input(monkey
 def test_generate_transcript_summary_honors_explicit_model_override(monkeypatch) -> None:
     settings = Settings(
         openclaw_gateway_token="gateway-token",
-        fake_mode=True,
     )
     client = OpenClawClient(settings)
 
@@ -210,38 +208,9 @@ def test_generate_transcript_summary_honors_explicit_model_override(monkeypatch)
     assert FakeAsyncClient.last_headers["x-openclaw-model"] == "custom-summary-model"
 
 
-def test_generate_transcript_summary_falls_back_from_legacy_fake_summary_model(monkeypatch) -> None:
-    settings = Settings(
-        openclaw_gateway_token="gateway-token",
-        fake_mode=True,
-    )
-    client = OpenClawClient(settings)
-
-    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
-
-    result = asyncio.run(
-        client.generate_transcript_summary(
-            prompt="Summarize decisions and next steps",
-            transcript_text="hello world",
-            title="Demo session",
-            model="fake-summary",
-        )
-    )
-
-    assert result == {
-        "markdown": "# Summary\n\n- Captured transcript details",
-        "provider": f"openclaw/{OPENCLAW_SUMMARY_MODEL_DEFAULT}",
-    }
-    assert FakeAsyncClient.last_json is not None
-    assert FakeAsyncClient.last_json["model"] == "openclaw"
-    assert FakeAsyncClient.last_headers is not None
-    assert FakeAsyncClient.last_headers["x-openclaw-model"] == OPENCLAW_SUMMARY_MODEL_DEFAULT
-
-
 def test_generate_transcript_summary_not_found_explains_config(monkeypatch) -> None:
     settings = Settings(
         openclaw_gateway_token="gateway-token",
-        fake_mode=True,
     )
     client = OpenClawClient(settings)
 
@@ -259,7 +228,6 @@ def test_generate_transcript_summary_not_found_explains_config(monkeypatch) -> N
 
 def test_generate_transcript_summary_timeout_surfaces_runtime_error(monkeypatch) -> None:
     settings = Settings(
-        fake_mode=True,
         openclaw_summary_timeout_seconds=60,
     )
     client = OpenClawClient(settings)
@@ -281,7 +249,6 @@ def test_generate_transcript_summary_timeout_surfaces_runtime_error(monkeypatch)
 def test_generate_transcript_summary_retries_timeout_and_recovers(monkeypatch) -> None:
     settings = Settings(
         openclaw_gateway_token="gateway-token",
-        fake_mode=True,
         openclaw_summary_timeout_seconds=60,
     )
     client = OpenClawClient(settings)

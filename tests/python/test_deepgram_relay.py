@@ -3,11 +3,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from transcripts.deepgram_client import DeepgramClient
 from transcripts.deepgram_relay import RelayManager
 
 
-def test_relay_manager_tags_fake_events_with_source(settings) -> None:
+def test_relay_manager_tags_deepgram_events_with_source(settings) -> None:
     events: list[dict[str, Any]] = []
 
     async def on_event(job_id: str, event: dict[str, Any]) -> None:
@@ -16,16 +15,43 @@ def test_relay_manager_tags_fake_events_with_source(settings) -> None:
     async def on_degraded(job_id: str, message: str) -> None:
         raise AssertionError(message)
 
+    class ScriptedWebSocket:
+        def __init__(self) -> None:
+            self.messages: asyncio.Queue[str | None] = asyncio.Queue()
+            self.messages.put_nowait(
+                '{"type":"Results","is_final":true,"start":0.0,"duration":1.0,"channel":{"alternatives":[{"transcript":"hello","words":[]}]}}'
+            )
+            self.messages.put_nowait(None)
+
+        async def send(self, message: object) -> None:
+            return None
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            message = await self.messages.get()
+            if message is None:
+                raise StopAsyncIteration
+            return message
+
+    class ScriptedDeepgramClient:
+        async def connect(self, **kwargs):
+            return ScriptedWebSocket()
+
+    async def audio_stream():
+        yield b"\x00\x01"
+
     async def run() -> None:
         relay = RelayManager(
             settings=settings,
-            deepgram_client=DeepgramClient(settings),
+            deepgram_client=ScriptedDeepgramClient(),  # type: ignore[arg-type]
             on_event=on_event,
             on_degraded=on_degraded,
         )
         await relay.start(
             "job-123",
-            lambda: None,
+            audio_stream,
             {
                 "model": "nova-3",
                 "language": None,
@@ -72,7 +98,7 @@ def test_relay_manager_stop_cancels_stalled_source_stream(settings) -> None:
 
     async def run() -> bool:
         relay = RelayManager(
-            settings=settings.model_copy(update={"fake_mode": False, "deepgram_api_key": "test-token"}),
+            settings=settings.model_copy(update={"deepgram_api_key": "test-token"}),
             deepgram_client=StalledDeepgramClient(),  # type: ignore[arg-type]
             on_event=on_event,
             on_degraded=on_degraded,

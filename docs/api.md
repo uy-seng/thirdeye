@@ -4,6 +4,8 @@
 
 The source-built macOS app talks directly to `controller-api` on `127.0.0.1:8788`. Routes are intended for loopback-only local use and do not require a thirdeye login.
 
+Only real local runtime routes are documented here. The API surface is the app-used local API only; retired web-app auth routes, simulated-provider routes, and diagnostic pages are not part of the supported API. Tests that need simulated providers use explicit doubles under `tests/support`; those doubles are injected by tests and cannot be enabled from `.env`.
+
 - `POST /api/jobs/start`
 - `POST /api/jobs/{job_id}/stop`
 - `POST /api/jobs/{job_id}/recover`

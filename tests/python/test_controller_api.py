@@ -66,6 +66,7 @@ def test_artifacts_overview_lists_jobs_with_artifacts(client) -> None:
     job = runtime.jobs.create_job(JobCreate(title="Artifact Overview"))
     paths = runtime.artifacts.job_paths(job.id)
     paths.summary.write_text("# Summary\n", encoding="utf-8")
+    runtime.artifacts.register_file(job.id, paths.summary)
 
     response = client.get("/api/artifacts")
 
@@ -82,12 +83,29 @@ def test_artifacts_overview_lists_jobs_with_artifacts(client) -> None:
     } in payload["jobs"][0]["artifacts"]["files"]
 
 
+def test_artifact_download_requires_manifest_entry(client) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(JobCreate(title="Manifest protected artifact"))
+    paths = runtime.artifacts.job_paths(job.id)
+    paths.summary.write_text("# Registered\n", encoding="utf-8")
+    runtime.artifacts.register_file(job.id, paths.summary)
+    rogue = paths.root / "rogue.txt"
+    rogue.write_text("not registered\n", encoding="utf-8")
+
+    registered = client.get(f"/artifacts/{job.id}/summary.md")
+    unregistered = client.get(f"/artifacts/{job.id}/rogue.txt")
+
+    assert registered.status_code == 200
+    assert registered.text == "# Registered\n"
+    assert unregistered.status_code == 404
+
+
 def test_recover_endpoint_accepts_recoverable_failed_job(client) -> None:
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Recover endpoint"))
     paths = runtime.artifacts.job_paths(job.id)
     paths.transcript_markdown.write_text("# Transcript\n\nRecovered\n", encoding="utf-8")
-    paths.transcript_text.write_text("Recovered\n", encoding="utf-8")
+    paths.transcript_json.write_text('{"segments":[]}\n', encoding="utf-8")
     runtime.jobs.update_runtime_fields(job.id, state=JobState.FAILED.value)
     runtime.jobs.update_metadata(job.id, finalization_checkpoint="transcript_compiled")
 
@@ -260,7 +278,58 @@ def test_live_stream_sse_promotes_terminal_interim_before_metadata(client) -> No
     assert snapshot["final_blocks"] == [promoted_payload]
 
 
-def test_voice_note_websocket_transcribes_streamed_microphone_audio(client) -> None:
+def test_voice_note_websocket_transcribes_streamed_microphone_audio(client, monkeypatch) -> None:
+    class FakeDeepgramSocket:
+        def __init__(self) -> None:
+            self.messages: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def send(self, message) -> None:
+            if not isinstance(message, str):
+                await self.messages.put(
+                    json.dumps(
+                        {
+                            "type": "Results",
+                            "is_final": False,
+                            "start": 0.0,
+                            "duration": 0.5,
+                            "channel": {"alternatives": [{"transcript": "voice note draft", "words": []}]},
+                        }
+                    )
+                )
+                return
+            payload = json.loads(message)
+            if payload.get("type") == "Finalize":
+                await self.messages.put(
+                    json.dumps(
+                        {
+                            "type": "Results",
+                            "is_final": True,
+                            "start": 0.0,
+                            "duration": 1.0,
+                            "channel": {"alternatives": [{"transcript": "voice note captured", "words": []}]},
+                        }
+                    )
+                )
+            if payload.get("type") == "CloseStream":
+                await self.messages.put(None)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            message = await self.messages.get()
+            if message is None:
+                raise StopAsyncIteration
+            return message
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_connect(self, **kwargs):
+        return FakeDeepgramSocket()
+
+    monkeypatch.setattr("api.main.DeepgramClient.connect", fake_connect)
+
     with client.websocket_connect("/ws/voice-notes/live") as websocket:
         websocket.send_bytes(b"\x00\x01" * 256)
         interim = websocket.receive_json()
@@ -315,7 +384,7 @@ def test_voice_note_websocket_uses_live_deepgram_path(settings, monkeypatch) -> 
         return FakeDeepgramSocket()
 
     monkeypatch.setattr("api.main.DeepgramClient.connect", fake_connect)
-    app = create_app(settings.model_copy(update={"fake_mode": False}))
+    app = create_app(settings)
 
     with TestClient(app) as test_client:
         with test_client.websocket_connect("/ws/voice-notes/live") as websocket:

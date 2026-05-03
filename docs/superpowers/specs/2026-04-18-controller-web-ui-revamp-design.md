@@ -1,5 +1,7 @@
 # Controller Web UI Revamp Design
 
+> Archival note: this April 2026 design refers to the removed `controller/web` browser UI, login/session pages, and health dashboard ideas. It is historical context only; the current supported UI is the Tauri app.
+
 **Date:** 2026-04-18
 
 **Goal:** Replace the current bespoke controller UI with a shadcn-based design system and a clearer navigation model so operators can move through capture, supervision, and archive tasks with less scanning and fewer context switches.

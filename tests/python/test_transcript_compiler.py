@@ -6,7 +6,7 @@ from pathlib import Path
 from transcripts.compiler import TranscriptCompiler
 
 
-def test_compiler_emits_text_markdown_and_json(tmp_path: Path) -> None:
+def test_compiler_emits_markdown_and_debug_json_without_text_file(tmp_path: Path) -> None:
     events_path = tmp_path / "deepgram-events.jsonl"
     raw_events = [
         {"type": "Metadata", "request_id": "req-123", "model_info": {"name": "nova-3"}},
@@ -56,13 +56,13 @@ def test_compiler_emits_text_markdown_and_json(tmp_path: Path) -> None:
         output_dir=tmp_path,
     )
 
-    assert result.text_path.exists()
     assert result.markdown_path.exists()
     assert result.json_path.exists()
-    text = result.text_path.read_text(encoding="utf-8")
-    assert "Job ID: job-123" in text
-    assert "[00:00.000 - 00:01.500] Speaker 1: Opening remarks" in text
-    assert "[00:02.000 - 00:03.000] Speaker 2: Follow up question" in text
+    assert not (tmp_path / "transcript.txt").exists()
+    markdown = result.markdown_path.read_text(encoding="utf-8")
+    assert "- Job ID: job-123" in markdown
+    assert "- [00:00.000 - 00:01.500] Speaker 1: Opening remarks" in markdown
+    assert "- [00:02.000 - 00:03.000] Speaker 2: Follow up question" in markdown
 
     payload = json.loads(result.json_path.read_text(encoding="utf-8"))
     assert payload["metadata"]["request_id"] == "req-123"
@@ -137,17 +137,15 @@ def test_compiler_writes_system_and_self_transcripts_as_separate_sections(tmp_pa
         output_dir=tmp_path,
     )
 
-    text = result.text_path.read_text(encoding="utf-8")
-    system_header = text.index("System Recording")
-    system_answer = text.index("Speaker 2: System answer")
-    system_follow_up = text.index("Speaker 3: System follow up")
-    self_header = text.index("Self")
-    self_line = text.index("Self: My question")
+    markdown = result.markdown_path.read_text(encoding="utf-8")
+    system_header = markdown.index("## System Recording")
+    system_answer = markdown.index("Speaker 2: System answer")
+    system_follow_up = markdown.index("Speaker 3: System follow up")
+    self_header = markdown.index("## Self")
+    self_line = markdown.index("Self: My question")
 
     assert system_header < system_answer < system_follow_up < self_header < self_line
-    assert "Speaker 0: My question" not in text
-
-    markdown = result.markdown_path.read_text(encoding="utf-8")
+    assert "Speaker 0: My question" not in markdown
     assert "## System Recording" in markdown
     assert "## Self" in markdown
     assert "- [00:01.000 - 00:02.000] Self: My question" in markdown
@@ -166,8 +164,9 @@ def test_compiler_handles_missing_events_file(tmp_path: Path) -> None:
         output_dir=tmp_path,
     )
 
-    text = result.text_path.read_text(encoding="utf-8")
-    assert "Job ID: job-456" in text
+    markdown = result.markdown_path.read_text(encoding="utf-8")
+    assert "- Job ID: job-456" in markdown
+    assert not (tmp_path / "transcript.txt").exists()
 
     payload = json.loads(result.json_path.read_text(encoding="utf-8"))
     assert payload["metadata"]["request_id"] is None
@@ -215,10 +214,10 @@ def test_compiler_keeps_unfinalized_interim_when_stream_ends(tmp_path: Path) -> 
         output_dir=tmp_path,
     )
 
-    text = result.text_path.read_text(encoding="utf-8")
+    markdown = result.markdown_path.read_text(encoding="utf-8")
     payload = json.loads(result.json_path.read_text(encoding="utf-8"))
 
-    assert "[00:16.240 - 00:18.290] Speaker 0: And I hide out in the stall." in text
+    assert "- [00:16.240 - 00:18.290] Speaker 0: And I hide out in the stall." in markdown
     assert payload["segments"] == [
         {
             "type": "final",

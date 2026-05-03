@@ -7,16 +7,21 @@ import {
   apiUrl,
   artifactHref,
   createDesktop,
+  deleteVoiceNote,
   deleteJob,
   destroyDesktop,
   generateTranscriptSummary,
   generateVoiceNoteSummary,
   getDesktops,
   getJobs,
+  getVoiceNotes,
+  importVoiceNotes,
+  saveVoiceNote,
   saveTranscriptSummary,
   setRecordMicrophoneEnabled,
   setTargetAudioMuted,
   startCapture,
+  updateVoiceNote,
 } from "../lib/api";
 
 test("apiUrl points the native app at the local controller API", () => {
@@ -231,6 +236,46 @@ test("generateVoiceNoteSummary posts a voice note transcript to OpenClaw", async
       transcript: "Follow up tomorrow.",
       prompt: "Summarize this voice note.",
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("voice note storage API uses controller persistence routes", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const note = {
+    id: "note-1",
+    title: "Quick note",
+    transcript: "Follow up tomorrow.",
+    createdAt: "2026-04-30T16:00:00.000Z",
+    durationMs: 10_000,
+    audioDataUrl: "data:audio/webm;base64,abc123",
+  };
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, init });
+    const payload = init?.method === undefined || url.endsWith("/api/voice-notes/import") ? [note] : note;
+    return new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" }, status: 200 });
+  };
+
+  try {
+    assert.deepEqual(await getVoiceNotes(), [note]);
+    assert.equal((await saveVoiceNote(note)).id, "note-1");
+    assert.equal((await updateVoiceNote("note-1", { title: "Updated" })).id, "note-1");
+    assert.deepEqual(await importVoiceNotes([note]), [note]);
+    assert.equal((await deleteVoiceNote("note-1")).id, "note-1");
+
+    assert.deepEqual(
+      calls.map((call) => [call.url, call.init?.method ?? "GET"]),
+      [
+        ["http://127.0.0.1:8788/api/voice-notes", "GET"],
+        ["http://127.0.0.1:8788/api/voice-notes", "POST"],
+        ["http://127.0.0.1:8788/api/voice-notes/note-1", "PATCH"],
+        ["http://127.0.0.1:8788/api/voice-notes/import", "POST"],
+        ["http://127.0.0.1:8788/api/voice-notes/note-1", "DELETE"],
+      ],
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

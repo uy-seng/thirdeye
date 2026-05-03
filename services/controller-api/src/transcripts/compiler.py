@@ -18,7 +18,6 @@ TRANSCRIPT_SOURCE_HEADINGS = {
 
 @dataclass(frozen=True)
 class TranscriptCompileResult:
-    text_path: Path
     markdown_path: Path
     json_path: Path
 
@@ -35,6 +34,7 @@ class TranscriptCompiler:
         language: str | None,
         events_path: Path,
         output_dir: Path,
+        debug_output_dir: Path | None = None,
     ) -> TranscriptCompileResult:
         metadata: dict[str, Any] = {
             "job_id": job_id,
@@ -78,16 +78,6 @@ class TranscriptCompiler:
             if promoted is not None:
                 segments.append(promoted)
 
-        text_lines = [
-            f"Job ID: {metadata['job_id']}",
-            f"Title: {metadata['title']}",
-            f"Start Time: {metadata['started_at'] or 'unknown'}",
-            f"Stop Time: {metadata['stopped_at'] or 'unknown'}",
-            f"Deepgram Request ID: {metadata['request_id'] or 'unknown'}",
-            f"Model: {metadata['model']}",
-            f"Language: {metadata['language'] or 'auto'}",
-            "",
-        ]
         markdown_lines = [f"# {title}", "", "## Metadata", ""]
         markdown_lines.extend(
             [
@@ -104,31 +94,26 @@ class TranscriptCompiler:
         for source in TRANSCRIPT_SOURCE_ORDER:
             heading = TRANSCRIPT_SOURCE_HEADINGS[source]
             source_segments = segments_by_source[source]
-            text_lines.extend([heading, ""])
             markdown_lines.extend([f"## {heading}", ""])
             if not source_segments:
-                text_lines.extend(["No transcript captured.", ""])
                 markdown_lines.extend(["No transcript captured.", ""])
                 continue
             for segment in source_segments:
                 line = self._segment_line(segment)
-                text_lines.append(line)
                 markdown_lines.append(f"- {line}")
-            text_lines.append("")
             markdown_lines.append("")
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        text_path = output_dir / "transcript.txt"
+        debug_output_dir = debug_output_dir or output_dir
+        debug_output_dir.mkdir(parents=True, exist_ok=True)
         markdown_path = output_dir / "transcript.md"
-        json_path = output_dir / "transcript.json"
-        text_path.write_text("\n".join(text_lines) + "\n", encoding="utf-8")
+        json_path = debug_output_dir / "transcript.json"
         markdown_path.write_text("\n".join(markdown_lines) + "\n", encoding="utf-8")
         json_path.write_text(
             json.dumps({"metadata": metadata, "segments": segments}, indent=2),
             encoding="utf-8",
         )
         return TranscriptCompileResult(
-            text_path=text_path,
             markdown_path=markdown_path,
             json_path=json_path,
         )

@@ -356,43 +356,6 @@ def test_rerun_summary_route_uses_openclaw_and_rewrites_canonical_summary(client
     assert "Canonical transcript line" in captured["transcript_text"]
 
 
-def test_rerun_summary_route_falls_back_from_legacy_fake_summary_model(client, monkeypatch) -> None:
-    runtime = client.app.state.runtime
-    job = runtime.jobs.create_job(JobCreate(title="Legacy Canonical Summary", summary_model="fake-summary"))
-    append_transcript(runtime, job.id, final_text="Legacy transcript line")
-
-    captured: dict[str, str] = {}
-
-    async def fake_generate_transcript_summary(
-        *, prompt: str, transcript_text: str, title: str, model: str | None = None
-    ) -> dict[str, str]:
-        captured["model"] = model or ""
-        return {
-            "markdown": "# Summary\n\nCanonical recap\n",
-            "provider": "openclaw/openai-codex",
-        }
-
-    monkeypatch.setattr(
-        runtime.openclaw,
-        "generate_transcript_summary",
-        fake_generate_transcript_summary,
-        raising=False,
-    )
-
-    response = client.post(f"/api/jobs/{job.id}/summary/rerun")
-
-    assert response.status_code == 202
-    for _ in range(100):
-        payload = client.get(f"/api/jobs/{job.id}").json()
-        if payload["metadata_json"].get("summary_status") == "completed":
-            break
-        time.sleep(0.02)
-    else:
-        raise AssertionError("summary rerun did not complete")
-
-    assert captured["model"] == runtime.settings.openclaw_summary_model
-
-
 def test_duplicate_summary_rerun_requests_reuse_existing_background_run(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Canonical Summary Reuse"))

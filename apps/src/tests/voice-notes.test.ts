@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clearLegacyVoiceNotes,
   createVoiceNote,
-  deleteVoiceNote,
   formatVoiceNoteDuration,
-  loadVoiceNotes,
-  saveVoiceNotes,
+  loadLegacyVoiceNotes,
   VOICE_NOTES_STORAGE_KEY,
 } from "../lib/voice-notes";
 
@@ -57,7 +56,7 @@ test("falls back to a friendly title when no words were captured", () => {
   assert.equal(note.transcript, "");
 });
 
-test("stores newest voice notes first and deletes by id", () => {
+test("loads and clears legacy voice notes for backend import", () => {
   installStorage();
   const first = createVoiceNote({
     id: "note-1",
@@ -72,15 +71,14 @@ test("stores newest voice notes first and deletes by id", () => {
     durationMs: 12_000,
   });
 
-  saveVoiceNotes([first]);
-  saveVoiceNotes([second, ...loadVoiceNotes()]);
+  localStorage.setItem(VOICE_NOTES_STORAGE_KEY, JSON.stringify([second, first]));
 
   assert.equal(localStorage.getItem(VOICE_NOTES_STORAGE_KEY)?.includes("Second note"), true);
-  assert.deepEqual(loadVoiceNotes().map((note) => note.id), ["note-2", "note-1"]);
+  assert.deepEqual(loadLegacyVoiceNotes().map((note) => note.id), ["note-2", "note-1"]);
 
-  deleteVoiceNote("note-2");
+  clearLegacyVoiceNotes();
 
-  assert.deepEqual(loadVoiceNotes().map((note) => note.id), ["note-1"]);
+  assert.deepEqual(loadLegacyVoiceNotes(), []);
 });
 
 test("keeps generated summaries with saved voice notes", () => {
@@ -92,7 +90,7 @@ test("keeps generated summaries with saved voice notes", () => {
     durationMs: 22_000,
   });
 
-  saveVoiceNotes([
+  localStorage.setItem(VOICE_NOTES_STORAGE_KEY, JSON.stringify([
     {
       ...note,
       summary: {
@@ -101,9 +99,9 @@ test("keeps generated summaries with saved voice notes", () => {
         generatedAt: "2026-04-30T16:01:00.000Z",
       },
     },
-  ]);
+  ]));
 
-  assert.equal(loadVoiceNotes()[0]?.summary?.markdown, "Morgan owns the launch checklist follow-up.");
+  assert.equal(loadLegacyVoiceNotes()[0]?.summary?.markdown, "Morgan owns the launch checklist follow-up.");
 });
 
 test("formats voice note durations for short recordings", () => {

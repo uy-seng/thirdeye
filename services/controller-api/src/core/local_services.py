@@ -223,6 +223,7 @@ def controller_api_command(runtime_root: Path, repo_root: Path | None = None) ->
         "CONTROLLER_CORS_ORIGINS=http://127.0.0.1:1420,tauri://localhost "
         f"CONTROLLER_DB_PATH={shell_escape(selected_runtime_root / 'controller' / 'controller.db')} "
         f"ARTIFACTS_ROOT={shell_escape(selected_runtime_root / 'artifacts')} "
+        f"DEBUG_LOGS_ROOT={shell_escape(selected_runtime_root / 'logs')} "
         f"RECORDINGS_ROOT={shell_escape(selected_runtime_root / 'recordings')} "
         f"CONTROLLER_EVENTS_ROOT={shell_escape(selected_runtime_root / 'controller-events')} "
         f"DESKTOP_SESSIONS_ROOT={shell_escape(selected_runtime_root / 'desktop-sessions')} "

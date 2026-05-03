@@ -48,7 +48,7 @@ class RecoveryService:
         if checkpoint not in {"transcript_compiled", "summary_completed"}:
             return False
         paths = self.jobs.artifacts.job_paths(job.id)
-        transcript_ready = paths.transcript_markdown.exists() and paths.transcript_text.exists()
+        transcript_ready = paths.transcript_markdown.exists() and paths.transcript_json.exists()
         return transcript_ready or paths.deepgram_events.exists()
 
     def reconcile(self) -> dict[str, list[str]]:

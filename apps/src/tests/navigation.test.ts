@@ -17,6 +17,17 @@ test("does not show a Files tab in the app navigation", () => {
   assert.doesNotMatch(source, /view\s*===\s*"artifacts"/);
 });
 
+test("uses planned workspace labels and hash-backed routes", () => {
+  assert.match(source, /overview: "\/"/);
+  assert.match(source, /captures: "\/captures"/);
+  assert.match(source, /viewFromHash\(window\.location\.hash\)/);
+  assert.match(source, /window\.history\.pushState\(null, "", nextHash\)/);
+  assert.match(source, /view: "overview", label: "Overview"/);
+  assert.match(source, /view: "captures", label: "Captures"/);
+  assert.doesNotMatch(source, /view: "dashboard"/);
+  assert.doesNotMatch(source, /label: "Jobs"/);
+});
+
 test("uses the shared thirdeye logo in the navigation brand", () => {
   assert.match(source, /import thirdeyeLogoUrl from "\.\.\/\.\.\/\.\.\/\.\.\/assets\/logo\.png";/);
   assert.match(source, /<img alt="thirdeye logo" className="brand-logo" src=\{thirdeyeLogoUrl\} \/>/);

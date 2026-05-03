@@ -17,7 +17,7 @@
 ## Deepgram degraded mid-job
 
 - Recording continues.
-- Check `metadata.json` and `deepgram-events.jsonl`.
+- For internal debugging, check `runtime/artifacts/jobs/{job_id}/metadata.json` and `runtime/logs/jobs/{job_id}/deepgram-events.jsonl`.
 - Retry summary or notification after the recording stops.
 
 ## Controller restart during capture

@@ -11,6 +11,7 @@ import type {
   JobResponse,
   TranscriptSummaryGenerateResponse,
   VoiceNoteSummaryGenerateResponse,
+  VoiceNote,
 } from "./types";
 
 export const API_BASE = "http://127.0.0.1:8788";
@@ -142,6 +143,35 @@ export function generateVoiceNoteSummary(payload: { title: string; transcript: s
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function getVoiceNotes() {
+  return apiJson<VoiceNote[]>("/api/voice-notes");
+}
+
+export function saveVoiceNote(note: VoiceNote) {
+  return apiJson<VoiceNote>("/api/voice-notes", {
+    method: "POST",
+    body: JSON.stringify(note),
+  });
+}
+
+export function updateVoiceNote(noteId: string, updates: Partial<Pick<VoiceNote, "title" | "transcript" | "durationMs" | "audioDataUrl" | "summary">>) {
+  return apiJson<VoiceNote>(`/api/voice-notes/${noteId}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+export function importVoiceNotes(notes: VoiceNote[]) {
+  return apiJson<VoiceNote[]>("/api/voice-notes/import", {
+    method: "POST",
+    body: JSON.stringify({ notes }),
+  });
+}
+
+export function deleteVoiceNote(noteId: string) {
+  return apiJson<VoiceNote>(`/api/voice-notes/${noteId}`, { method: "DELETE" });
 }
 
 export function getCaptureTargets(backend: CaptureBackend) {

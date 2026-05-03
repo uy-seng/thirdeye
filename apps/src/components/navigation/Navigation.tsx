@@ -6,9 +6,9 @@ import type { View } from "../../app/view";
 export function Navigation({ view, setView, liveAvailable }: { view: View; setView: (view: View) => void; liveAvailable: boolean }) {
   const liveItems: Array<{ view: View; label: string; icon: typeof Activity }> = liveAvailable ? [{ view: "live" as const, label: "Live", icon: Captions }] : [];
   const items: Array<{ view: View; label: string; icon: typeof Activity }> = [
-    { view: "dashboard", label: "Overview", icon: Activity },
+    { view: "overview", label: "Overview", icon: Activity },
     { view: "capture", label: "Capture", icon: MonitorUp },
-    { view: "jobs", label: "Jobs", icon: ListChecks },
+    { view: "captures", label: "Captures", icon: ListChecks },
     ...liveItems,
     { view: "voice-notes", label: "Voice notes", icon: Mic },
     { view: "settings", label: "Settings", icon: Settings },

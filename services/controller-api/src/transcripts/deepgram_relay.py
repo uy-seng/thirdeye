@@ -87,44 +87,6 @@ class RelayManager:
         job_options: dict[str, Any],
         source: RelaySource,
     ) -> None:
-        if self.settings.fake_mode:
-            await self.on_event(
-                job_id,
-                self._tag_event(source, {"type": "Metadata", "request_id": f"fake-{job_id}", "model_info": {"name": job_options["model"]}}),
-            )
-            await asyncio.sleep(0.05)
-            await self.on_event(
-                job_id,
-                self._tag_event(
-                    source,
-                    {
-                        "type": "Results",
-                        "is_final": False,
-                        "start": 0.0,
-                        "duration": 0.7,
-                        "channel": {"alternatives": [{"transcript": "connecting to livestream", "words": [{"speaker": 1, "start": 0.0, "end": 0.7}]}]},
-                    },
-                ),
-            )
-            await asyncio.sleep(0.05)
-            await self.on_event(
-                job_id,
-                self._tag_event(
-                    source,
-                    {
-                        "type": "Results",
-                        "is_final": True,
-                        "start": 0.0,
-                        "duration": 1.3,
-                        "channel": {"alternatives": [{"transcript": "public session started", "words": [{"speaker": 1, "start": 0.0, "end": 1.3}]}]},
-                    },
-                ),
-            )
-            await self.on_event(job_id, self._tag_event(source, {"type": "SpeechStarted", "timestamp": 0.0}))
-            await self.on_event(job_id, self._tag_event(source, {"type": "UtteranceEnd", "last_word_end": 1.3}))
-            await stop_event.wait()
-            return
-
         try:
             websocket = await self.deepgram_client.connect(
                 model=job_options["model"],

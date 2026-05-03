@@ -20,6 +20,7 @@ from jobs.models import (
     merge_metadata,
     resolve_capture_selection,
 )
+from jobs.operations import OperationRepository
 from core.settings import Settings
 from jobs.state_machine import ACTIVE_JOB_STATES, JobState, JobStateMachine
 from transcripts.prompt_service import TranscriptPromptService
@@ -97,7 +98,7 @@ class JobRepository:
                 summary_model=payload.summary_model or self.settings.openclaw_summary_model,
                 recording_path=str(paths.recording) if payload.record_screen else None,
                 audio_path=str(stage_audio),
-                transcript_text_path=str(paths.transcript_text),
+                transcript_text_path=None,
                 transcript_events_path=str(paths.deepgram_events),
                 summary_path=str(paths.summary),
                 ffmpeg_pid=None,
@@ -293,6 +294,7 @@ class CaptureRuntime:
         transcript_store: TranscriptStore,
         transcript_compiler: TranscriptCompiler,
         transcript_prompts: TranscriptPromptService,
+        operations: OperationRepository,
         relay_manager,
         capture_backends: CaptureBackendRegistry,
         transcript_hub,
@@ -303,6 +305,7 @@ class CaptureRuntime:
         self.transcript_store = transcript_store
         self.transcript_compiler = transcript_compiler
         self.transcript_prompts = transcript_prompts
+        self.operations = operations
         self.relay_manager = relay_manager
         self.capture_backends = capture_backends
         self.desktop_client = capture_backends.require("docker_desktop")
@@ -389,9 +392,9 @@ class CaptureRuntime:
     def _conflicting_active_job(self, capture_backend: str, capture_target: dict[str, Any]) -> str | None:
         target_id = capture_target.get("id")
         for active_job in self.jobs.active_jobs():
-            if active_job.capture_backend == "macos_local" or capture_backend == "macos_local":
+            if active_job.capture_backend == "macos_local" and capture_backend == "macos_local":
                 return "only one active This Mac capture is allowed"
-            if active_job.capture_backend == "docker_desktop" and active_job.capture_target.get("id") == target_id:
+            if capture_backend == "docker_desktop" and active_job.capture_backend == "docker_desktop" and active_job.capture_target.get("id") == target_id:
                 return "that isolated desktop is already recording"
         return None
 
@@ -590,13 +593,24 @@ class CaptureRuntime:
 
     async def dispatch_stop_capture(self, job_id: str, *, skip_summary: bool = False) -> JobResponse:
         self.jobs.get_job(job_id)
-        await self._ensure_background_task(job_id, "stop", self._run_stop_capture(job_id, skip_summary=skip_summary))
+        operation = self.operations.get_or_create(
+            job_id=job_id,
+            kind="stop",
+            idempotency_key=f"stop:{job_id}",
+            payload={"skip_summary": skip_summary},
+        )
+        await self._ensure_background_task(job_id, "stop", self._run_stop_capture(job_id, operation.id, skip_summary=skip_summary), operation.id)
         return self.jobs.get_job(job_id)
 
     async def dispatch_summary_rerun(self, job_id: str) -> JobResponse:
         self.jobs.get_job(job_id)
         self._mark_summary_running(job_id, include_legacy_keys=True)
-        await self._ensure_background_task(job_id, "summary_rerun", self._run_summary_rerun(job_id))
+        operation = self.operations.get_or_create(
+            job_id=job_id,
+            kind="summary_rerun",
+            idempotency_key=f"summary_rerun:{job_id}",
+        )
+        await self._ensure_background_task(job_id, "summary_rerun", self._run_summary_rerun(job_id, operation.id), operation.id)
         return self.jobs.get_job(job_id)
 
     async def dispatch_recover_capture(self, job_id: str) -> JobResponse:
@@ -605,7 +619,12 @@ class CaptureRuntime:
             raise RuntimeError("job is not recoverable")
         if JobState(job.state) != JobState.COMPILING_TRANSCRIPT and JobState(job.state) != JobState.RECOVERING:
             job = self.jobs.transition_job(job.id, JobState.RECOVERING, "recovery requested")
-        await self._ensure_background_task(job_id, "recover", self._run_recover_capture(job_id))
+        operation = self.operations.get_or_create(
+            job_id=job_id,
+            kind="recover",
+            idempotency_key=f"recover:{job_id}",
+        )
+        await self._ensure_background_task(job_id, "recover", self._run_recover_capture(job_id, operation.id), operation.id)
         return job
 
     async def _supervise(self, job_id: str) -> None:
@@ -622,13 +641,14 @@ class CaptureRuntime:
             return message
         return "capture failed to start"
 
-    async def _ensure_background_task(self, job_id: str, action: str, coroutine) -> None:
+    async def _ensure_background_task(self, job_id: str, action: str, coroutine, operation_id: str) -> None:
         key = (job_id, action)
         async with self._background_tasks_lock:
             existing = self._background_tasks.get(key)
             if existing is not None and not existing.done():
                 coroutine.close()
                 return
+            self.operations.mark_running(operation_id)
             task = asyncio.create_task(coroutine)
             self._background_tasks[key] = task
 
@@ -639,21 +659,33 @@ class CaptureRuntime:
 
             task.add_done_callback(_cleanup)
 
-    async def _run_stop_capture(self, job_id: str, *, skip_summary: bool = False) -> None:
-        with contextlib.suppress(Exception):
-            await self.stop_capture(job_id, skip_summary=skip_summary)
+    async def _run_stop_capture(self, job_id: str, operation_id: str, *, skip_summary: bool = False) -> None:
+        try:
+            job = await self.stop_capture(job_id, skip_summary=skip_summary)
+        except Exception as exc:
+            self.operations.mark_failed(operation_id, self._failure_message(exc))
+            return
+        self.operations.mark_completed(operation_id, {"job_id": job.id, "state": job.state})
 
-    async def _run_summary_rerun(self, job_id: str) -> None:
+    async def _run_summary_rerun(self, job_id: str, operation_id: str) -> None:
         try:
             summary_path = await self.transcript_prompts.rewrite_canonical_summary(job_id=job_id)
+            self.artifacts.register_file(job_id, self.artifacts.job_paths(job_id).summary, content_type="text/markdown")
             self.jobs.update_runtime_fields(job_id, summary_path=summary_path)
             self._mark_summary_completed(job_id, include_legacy_keys=True)
         except Exception as exc:
             self._mark_summary_failed(job_id, exc, include_legacy_keys=True)
+            self.operations.mark_failed(operation_id, self._failure_message(exc))
+            return
+        self.operations.mark_completed(operation_id, {"job_id": job_id, "summary_path": summary_path})
 
-    async def _run_recover_capture(self, job_id: str) -> None:
-        with contextlib.suppress(Exception):
-            await self.recover_capture(job_id)
+    async def _run_recover_capture(self, job_id: str, operation_id: str) -> None:
+        try:
+            job = await self.recover_capture(job_id)
+        except Exception as exc:
+            self.operations.mark_failed(operation_id, self._failure_message(exc))
+            return
+        self.operations.mark_completed(operation_id, {"job_id": job.id, "state": job.state})
 
     async def recover_capture(self, job_id: str) -> JobResponse:
         job = self.jobs.get_job(job_id)
@@ -693,11 +725,10 @@ class CaptureRuntime:
             language=job.deepgram_language,
             events_path=paths.deepgram_events,
             output_dir=paths.root,
+            debug_output_dir=paths.logs_root,
         )
-        self.jobs.update_runtime_fields(
-            job.id,
-            transcript_text_path=str(compiled.text_path),
-        )
+        self.artifacts.register_file(job.id, compiled.markdown_path, content_type="text/markdown")
+        self.artifacts.register_file(job.id, compiled.json_path, content_type="application/json")
         self.jobs.update_metadata(
             job.id,
             finalization_checkpoint="transcript_compiled",
@@ -772,7 +803,7 @@ class CaptureRuntime:
 
     def _has_transcript_artifacts(self, job: JobResponse) -> bool:
         paths = self.artifacts.job_paths(job.id)
-        return paths.transcript_markdown.exists() and paths.transcript_text.exists()
+        return paths.transcript_markdown.exists() and paths.transcript_json.exists()
 
     def _mark_summary_running(self, job_id: str, *, include_legacy_keys: bool = False) -> None:
         updates: dict[str, Any] = {

@@ -6,7 +6,20 @@ from api.runtime import create_runtime
 from jobs.models import JobCreate
 
 
-def test_job_creation_removes_obsolete_job_columns(settings) -> None:
+def test_startup_migrations_record_schema_version(settings) -> None:
+    runtime = create_runtime(settings)
+
+    job = runtime.jobs.create_job(JobCreate(title="Migrated schema capture"))
+
+    assert job.title == "Migrated schema capture"
+    with sqlite3.connect(settings.controller_db_path) as connection:
+        versions = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
+    assert "0001_rebuild_jobs_schema" in versions
+    assert "0002_add_operations_and_artifact_manifest" in versions
+    assert "0003_add_voice_notes" in versions
+
+
+def test_job_creation_migrates_obsolete_job_columns(settings) -> None:
     settings.controller_db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(settings.controller_db_path) as connection:
         connection.execute(
@@ -54,7 +67,7 @@ def test_job_creation_removes_obsolete_job_columns(settings) -> None:
     assert "legacy_contact" not in columns
 
 
-def test_job_creation_keeps_obsolete_job_columns_out_of_new_schema(settings) -> None:
+def test_job_creation_uses_canonical_job_schema(settings) -> None:
     settings.controller_db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(settings.controller_db_path) as connection:
         connection.execute(
@@ -98,4 +111,6 @@ def test_job_creation_keeps_obsolete_job_columns_out_of_new_schema(settings) -> 
     assert not hasattr(job, "legacy_contact")
     with sqlite3.connect(settings.controller_db_path) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "legacy_contact" not in columns
+    assert {"operations", "artifact_manifest", "voice_notes"}.issubset(tables)

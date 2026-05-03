@@ -4,11 +4,7 @@ from dataclasses import dataclass
 
 from capture.desktop_exec import (
     CaptureClientProtocol,
-    DesktopHttpClient,
     DesktopPoolHttpClient,
-    FakeDesktopClient,
-    FakeDesktopPoolClient,
-    FakeMacOSCaptureClient,
     MacOSCaptureHttpClient,
 )
 from capture.desktop_sessions import DesktopSessionManager
@@ -27,14 +23,6 @@ class CaptureBackendRegistry:
 
 
 def build_capture_backends(settings: Settings, desktop_sessions: DesktopSessionManager) -> CaptureBackendRegistry:
-    if settings.fake_mode:
-        return CaptureBackendRegistry(
-            {
-                "docker_desktop": FakeDesktopPoolClient(settings, desktop_sessions),
-                "macos_local": FakeMacOSCaptureClient(settings),
-            }
-        )
-
     return CaptureBackendRegistry(
         {
             "docker_desktop": DesktopPoolHttpClient(settings, desktop_sessions),

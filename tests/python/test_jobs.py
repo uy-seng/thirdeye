@@ -96,6 +96,98 @@ def test_start_job_rejects_second_active_capture(client) -> None:
     assert second.status_code == 409
 
 
+def test_start_job_allows_this_mac_while_isolated_desktop_is_active(client) -> None:
+    create_desktop_session(client)
+    isolated = client.post(
+        "/api/jobs/start",
+        json={"title": "Isolated desktop livestream"},
+    )
+    assert isolated.status_code == 200
+
+    local = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "This Mac livestream",
+            "capture_backend": "macos_local",
+            "capture_target": {
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        },
+    )
+
+    assert local.status_code == 200
+    assert local.json()["capture_backend"] == "macos_local"
+
+
+def test_start_job_allows_isolated_desktop_while_this_mac_is_active(client) -> None:
+    desktop = create_desktop_session(client, "Isolated desktop")
+    local = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "This Mac livestream",
+            "capture_backend": "macos_local",
+            "capture_target": {
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        },
+    )
+    assert local.status_code == 200
+
+    isolated = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "Isolated desktop livestream",
+            "capture_backend": "docker_desktop",
+            "capture_target": {"id": desktop["target_id"], "kind": "desktop", "label": "Isolated desktop"},
+        },
+    )
+
+    assert isolated.status_code == 200
+    assert isolated.json()["capture_backend"] == "docker_desktop"
+
+
+def test_start_job_rejects_second_this_mac_capture(client) -> None:
+    first = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "First This Mac livestream",
+            "capture_backend": "macos_local",
+            "capture_target": {
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        },
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "Second This Mac livestream",
+            "capture_backend": "macos_local",
+            "capture_target": {
+                "id": "window:notes",
+                "kind": "window",
+                "label": "Notes",
+                "app_bundle_id": "com.apple.Notes",
+                "app_name": "Notes",
+                "window_id": "notes",
+            },
+        },
+    )
+
+    assert second.status_code == 409
+    assert second.json() == {"detail": "only one active This Mac capture is allowed"}
+
+
 def test_start_job_rejects_unknown_payload_fields(client) -> None:
 
     start = client.post(
@@ -160,19 +252,39 @@ def test_live_websocket_rebroadcasts_and_stop_finalizes_artifacts(client) -> Non
     payload = wait_for_metadata_value(client, job_id, "summary_status", "completed")
     assert payload["state"] == "completed"
     assert payload["summary_path"].endswith("summary.md")
+    paths = client.app.state.runtime.artifacts.job_paths(job_id)
 
     artifacts = client.get(f"/api/jobs/{job_id}/artifacts").json()
     artifact_names = {item["name"] for item in artifacts["files"]}
     assert {
         "recording.mp4",
-        "transcript.txt",
         "transcript.md",
         "transcript.json",
         "summary.md",
         "deepgram-events.jsonl",
         "controller-events.jsonl",
-        "metadata.json",
     } <= artifact_names
+    assert "metadata.json" not in artifact_names
+    assert "transcript.txt" not in artifact_names
+    assert paths.transcript_json == paths.logs_root / "transcript.json"
+    assert paths.deepgram_events == paths.logs_root / "deepgram-events.jsonl"
+    assert paths.controller_events == paths.logs_root / "controller-events.jsonl"
+    assert paths.metadata == paths.logs_root / "metadata.json"
+    assert not (paths.root / "metadata.json").exists()
+    assert not (paths.root / "transcript.txt").exists()
+    assert not (paths.root / "transcript.json").exists()
+    assert not (paths.root / "deepgram-events.jsonl").exists()
+    assert not (paths.root / "controller-events.jsonl").exists()
+    assert paths.transcript_json.exists()
+    assert paths.deepgram_events.exists()
+    assert paths.controller_events.exists()
+    assert paths.metadata.exists()
+    assert client.get(f"/artifacts/{job_id}/metadata.json").status_code == 404
+    for debug_name in {"transcript.json", "deepgram-events.jsonl", "controller-events.jsonl"}:
+        artifact = next(item for item in artifacts["files"] if item["name"] == debug_name)
+        assert "/logs/jobs/" in artifact["path"]
+        download = client.get(f"/artifacts/{job_id}/{debug_name}")
+        assert download.status_code == 200
 
 
 def test_start_job_can_skip_screen_recording_while_keeping_transcript_and_summary(client, monkeypatch) -> None:
@@ -211,7 +323,8 @@ def test_start_job_can_skip_screen_recording_while_keeping_transcript_and_summar
     assert payload["metadata_json"]["session_preferences"]["notify_on_inactivity"] is True
     assert not paths.recording.exists()
     assert "recording.mp4" not in artifact_names
-    assert "transcript.txt" in artifact_names
+    assert "transcript.md" in artifact_names
+    assert "transcript.txt" not in artifact_names
     assert "summary.md" in artifact_names
 
 
@@ -669,7 +782,7 @@ def test_stop_endpoint_accepts_active_job(client) -> None:
     wait_for_state(client, job_id, "completed")
 
 
-def test_artifacts_endpoint_only_lists_summary_when_markdown_exists(client) -> None:
+def test_artifacts_endpoint_only_lists_registered_summary(client) -> None:
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Markdown Summary"))
     before = client.get(f"/api/jobs/{job.id}/artifacts")
@@ -677,7 +790,9 @@ def test_artifacts_endpoint_only_lists_summary_when_markdown_exists(client) -> N
     assert before.status_code == 200
     assert "summary.md" not in {item["name"] for item in before.json()["files"]}
 
-    runtime.artifacts.job_paths(job.id).summary.write_text("# Summary\n", encoding="utf-8")
+    summary_path = runtime.artifacts.job_paths(job.id).summary
+    summary_path.write_text("# Summary\n", encoding="utf-8")
+    runtime.artifacts.register_file(job.id, summary_path, content_type="text/markdown")
 
     after = client.get(f"/api/jobs/{job.id}/artifacts")
 
@@ -756,20 +871,20 @@ def test_stop_summary_failure_keeps_job_completed_and_tracks_recap_error(client,
 
     artifacts = client.get(f"/api/jobs/{job_id}/artifacts").json()
     assert "recording.mp4" in {item["name"] for item in artifacts["files"]}
-    assert "transcript.txt" in {item["name"] for item in artifacts["files"]}
+    assert "transcript.md" in {item["name"] for item in artifacts["files"]}
+    assert "transcript.txt" not in {item["name"] for item in artifacts["files"]}
 
 def test_recover_route_resumes_recovering_job_and_completes(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(JobCreate(title="Recoverable failure"))
     paths = runtime.artifacts.job_paths(job.id)
     paths.transcript_markdown.write_text("# Transcript\n\nRecovered\n", encoding="utf-8")
-    paths.transcript_text.write_text("Recovered\n", encoding="utf-8")
+    paths.transcript_json.write_text('{"segments":[]}\n', encoding="utf-8")
     paths.recording.write_bytes(b"recording")
     runtime.jobs.update_runtime_fields(
         job.id,
         state=JobState.FAILED.value,
         recording_path=str(paths.recording),
-        transcript_text_path=str(paths.transcript_text),
     )
     runtime.jobs.update_metadata(
         job.id,
@@ -856,8 +971,9 @@ def test_stop_can_skip_canonical_summary_generation(client, monkeypatch) -> None
     assert "notify_error" not in payload["metadata_json"]
     assert "notify_completed_at" not in payload["metadata_json"]
     assert not paths.summary.exists()
-    assert paths.transcript_text.exists()
     assert paths.transcript_markdown.exists()
+    assert paths.transcript_json.exists()
+    assert not (paths.root / "transcript.txt").exists()
 
 
 def test_start_job_can_disable_final_summary_generation(client, monkeypatch) -> None:
@@ -890,7 +1006,9 @@ def test_start_job_can_disable_final_summary_generation(client, monkeypatch) -> 
     assert payload["metadata_json"]["session_preferences"]["notify_on_inactivity"] is True
     assert payload["metadata_json"]["summary_status"] == "skipped"
     assert not paths.summary.exists()
-    assert paths.transcript_text.exists()
+    assert paths.transcript_markdown.exists()
+    assert paths.transcript_json.exists()
+    assert not (paths.root / "transcript.txt").exists()
 
 
 def test_duplicate_stop_requests_reuse_existing_background_run(client, monkeypatch) -> None:

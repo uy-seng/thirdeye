@@ -7,10 +7,12 @@ from sqlalchemy.orm import sessionmaker
 from jobs.artifacts import ArtifactManager
 from capture.backends import CaptureBackendRegistry, build_capture_backends
 from capture.desktop_sessions import DesktopSessionManager
-from db.db import Base, create_session_factory, ensure_schema_compatibility
+from db.db import Base, create_session_factory, run_startup_migrations
 from transcripts.deepgram_client import DeepgramClient
 from transcripts.deepgram_relay import RelayManager
 from jobs.jobs import CaptureRuntime, JobRepository
+from jobs.operations import OperationRepository
+from jobs.voice_notes import VoiceNoteRepository
 from transcripts.live_transcript import TranscriptHub
 from core.logging import configure_logging
 from integrations.openclaw_client import OpenClawClient
@@ -30,6 +32,8 @@ class AppRuntime:
     session_factory: sessionmaker
     artifacts: ArtifactManager
     jobs: JobRepository
+    operations: OperationRepository
+    voice_notes: VoiceNoteRepository
     capture: CaptureRuntime
     transcript_hub: TranscriptHub
     transcript_store: TranscriptStore
@@ -48,12 +52,14 @@ def create_runtime(settings: Settings) -> AppRuntime:
     ensure_directory(settings.recordings_root)
     session_factory = create_session_factory(settings.controller_db_path)
     Base.metadata.create_all(session_factory.kw["bind"])
-    ensure_schema_compatibility(session_factory.kw["bind"])
-    artifacts = ArtifactManager(settings)
+    run_startup_migrations(session_factory.kw["bind"])
+    artifacts = ArtifactManager(settings, session_factory=session_factory)
     transcript_hub = TranscriptHub()
     transcript_store = TranscriptStore(artifacts)
     state_machine = JobStateMachine()
     jobs = JobRepository(session_factory, settings, artifacts, state_machine)
+    operations = OperationRepository(session_factory)
+    voice_notes = VoiceNoteRepository(settings, session_factory)
     desktop_sessions = DesktopSessionManager(settings)
     capture_backends = build_capture_backends(settings, desktop_sessions)
     desktop = capture_backends.require("docker_desktop")
@@ -80,6 +86,7 @@ def create_runtime(settings: Settings) -> AppRuntime:
         transcript_store=transcript_store,
         transcript_compiler=TranscriptCompiler(),
         transcript_prompts=transcript_prompts,
+        operations=operations,
         relay_manager=relay_manager,
         capture_backends=capture_backends,
         transcript_hub=transcript_hub,
@@ -92,6 +99,8 @@ def create_runtime(settings: Settings) -> AppRuntime:
         session_factory=session_factory,
         artifacts=artifacts,
         jobs=jobs,
+        operations=operations,
+        voice_notes=voice_notes,
         capture=capture,
         transcript_hub=transcript_hub,
         transcript_store=transcript_store,

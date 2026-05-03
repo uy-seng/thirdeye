@@ -194,7 +194,7 @@ def test_desktop_container_is_grouped_under_thirdeye_in_docker_desktop(settings:
     monkeypatch.setattr(desktop_sessions_module, "_port_is_open", lambda port: False)
     monkeypatch.setattr(desktop_sessions_module.subprocess, "run", fake_run)
 
-    manager = DesktopSessionManager(settings.model_copy(update={"fake_mode": False}))
+    manager = DesktopSessionManager(settings)
 
     session = manager.create_session("Meeting room")
 
@@ -226,7 +226,7 @@ def test_local_desktop_image_is_rebuilt_before_starting_session(settings: Settin
     monkeypatch.setattr(desktop_sessions_module, "_port_is_open", lambda port: False)
     monkeypatch.setattr(desktop_sessions_module.subprocess, "run", fake_run)
 
-    manager = DesktopSessionManager(settings.model_copy(update={"fake_mode": False}))
+    manager = DesktopSessionManager(settings)
 
     manager.create_session("Fresh image")
 

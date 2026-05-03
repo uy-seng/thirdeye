@@ -1,5 +1,7 @@
 # Logo Branding Implementation Plan
 
+> Archival note: this implementation plan references the removed `controller/web` browser UI. It is historical context only; current branding work should target the Tauri app.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace text-first branding in the controller web app and README with the standalone logo asset the user added under `assets/`.

@@ -1,5 +1,7 @@
 # Python Package Cleanup Implementation Plan
 
+> Archival note: this implementation plan includes an old `apps/web` verification command. It is historical context only; the current supported UI is the Tauri app.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace nested Python service packages with clear `src/` package names and focused controller subpackages.

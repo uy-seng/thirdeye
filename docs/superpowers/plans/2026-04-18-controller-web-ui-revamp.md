@@ -1,5 +1,7 @@
 # Controller Web UI Revamp Implementation Plan
 
+> Archival note: this implementation plan targets the removed `controller/web` browser UI, including login/session screens and health-dashboard components. It is historical context only; use current public docs for the Tauri app.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Rebuild `controller/web` into a shadcn-based operational workspace with a persistent app shell, a dedicated jobs index, a unified job workspace, and removal of obsolete bespoke UI code.

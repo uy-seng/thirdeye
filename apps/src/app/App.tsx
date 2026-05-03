@@ -13,6 +13,7 @@ import {
   setTargetAudioMuted,
   stopCapture,
 } from "../lib/api";
+import { userVisibleArtifacts } from "../lib/artifacts";
 import { chooseSelectedJobId } from "../lib/job-selection";
 import { ACTIVE_STATES, canDeleteJob, canStopCapture } from "../lib/job-state";
 import { getServiceStatus, startLocalServices, stopLocalServices } from "../lib/services";
@@ -26,7 +27,7 @@ import { JobDetail, JobsTable } from "../features/jobs";
 import { LiveCaptureControls, LiveJobSelector, LiveSummaryPanel, LiveTranscript } from "../features/live";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import { VoiceNotesPanel } from "../features/voice-notes/VoiceNotesPanel";
-import type { View } from "./view";
+import { hashForView, viewFromHash, type View } from "./view";
 
 const deleteSuccessNotice = "Job deleted.";
 const stopRefreshIntervalMs = 1_500;
@@ -44,10 +45,10 @@ function wait(ms: number) {
 
 function viewTitle(view: View) {
   const titles: Record<View, string> = {
-    dashboard: "Operations overview",
+    overview: "Operations overview",
     capture: "Capture",
-    jobs: "Jobs",
     live: "Live",
+    captures: "Captures",
     "voice-notes": "Voice notes",
     settings: "Settings",
   };
@@ -55,7 +56,7 @@ function viewTitle(view: View) {
 }
 
 export function App() {
-  const [view, setView] = useState<View>("dashboard");
+  const [view, setViewState] = useState<View>(() => viewFromHash(window.location.hash));
   const [serviceStatus, setServiceStatus] = useState<ServiceStatus | null>(null);
   const [jobs, setJobs] = useState<JobResponse[]>([]);
   const [desktops, setDesktops] = useState<DesktopSession[]>([]);
@@ -80,8 +81,25 @@ export function App() {
   const handleSilenceNotificationUnavailable = useCallback((message: string) => {
     setNotice(message);
   }, []);
+  const setView = useCallback((nextView: View) => {
+    setViewState(nextView);
+    const nextHash = hashForView(nextView);
+    if (window.location.hash !== nextHash) {
+      window.history.pushState(null, "", nextHash);
+    }
+  }, []);
 
   useSilenceNotification(activeJobs, handleSilenceNotificationUnavailable);
+
+  useEffect(() => {
+    function handleRouteChange() {
+      setViewState(viewFromHash(window.location.hash));
+    }
+
+    window.addEventListener("hashchange", handleRouteChange);
+    handleRouteChange();
+    return () => window.removeEventListener("hashchange", handleRouteChange);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -146,7 +164,7 @@ export function App() {
     }
     const [job, jobArtifacts] = await Promise.all([getJob(jobId), getArtifactsOverview()]);
     setSelectedJob(job);
-    setArtifacts(jobArtifacts.jobs.find((entry) => entry.job.id === jobId)?.artifacts.files ?? []);
+    setArtifacts(userVisibleArtifacts(jobArtifacts.jobs.find((entry) => entry.job.id === jobId)?.artifacts.files ?? []));
   }
 
   async function refreshStoppedJobUntilSettled(jobId: string) {
@@ -154,6 +172,7 @@ export function App() {
     while (Date.now() < deadline) {
       await wait(stopRefreshIntervalMs);
       const job = await getJob(jobId);
+      await loadDesktops();
       if (selectedJobIdRef.current === jobId) {
         setSelectedJob(job);
       }
@@ -166,6 +185,7 @@ export function App() {
       }
     }
     await loadJobs();
+    await loadDesktops();
     if (selectedJobIdRef.current === jobId) {
       await loadSelectedJob(jobId);
     }
@@ -379,14 +399,14 @@ export function App() {
         ) : null}
         {notice ? <p className="notice">{notice}</p> : null}
 
-        {visibleView === "dashboard" ? (
+        {visibleView === "overview" ? (
           <div className="grid-two">
             <ServiceStrip onRefresh={() => void refreshStatus()} onStart={() => void handleStart()} onStop={() => void handleStopServices()} status={serviceStatus} />
             <DesktopSessionsPanel desktops={desktops} onCreate={handleCreateDesktop} onDestroyed={loadDesktops} onRefresh={loadDesktops} />
             <StartCapturePanel activeCaptures={activeJobs} onCreated={(job) => void handleCaptureCreated(job)} targetRefreshSignal={desktops} />
             <JobsTable jobs={jobs.slice(0, 6)} onSelect={(jobId) => {
               selectJob(jobId);
-              setView("jobs");
+              setView("captures");
             }} selectedJobId={selectedJobId} />
           </div>
         ) : null}
@@ -398,7 +418,7 @@ export function App() {
           </div>
         ) : null}
 
-        {visibleView === "jobs" ? (
+        {visibleView === "captures" ? (
           <div className="grid-two">
             <JobsTable jobs={jobs} onSelect={selectJob} selectedJobId={selectedJobId} />
             <JobDetail

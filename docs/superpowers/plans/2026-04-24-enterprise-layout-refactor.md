@@ -1,5 +1,7 @@
 # Enterprise Layout Refactor Implementation Plan
 
+> Archival note: this implementation plan mentions the legacy/development `apps/web` layout. That browser UI is no longer part of the current public runtime contract.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Reorganize the repository into an enterprise monorepo layout without breaking app startup, tests, or package imports.

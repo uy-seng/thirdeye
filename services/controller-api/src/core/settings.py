@@ -34,6 +34,7 @@ class Settings(BaseModel):
     controller_base_url: str = "http://127.0.0.1:8788"
     controller_db_path: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller" / "controller.db"
     artifacts_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "artifacts"
+    debug_logs_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "logs"
     recordings_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "recordings"
     controller_events_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller-events"
     desktop_sessions_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions"
@@ -62,7 +63,6 @@ class Settings(BaseModel):
     silence_timeout_minutes: int = 2
     enable_auto_stop: bool = False
     controller_cors_origins: list[str] = Field(default_factory=list)
-    fake_mode: bool = False
     log_level: str = "INFO"
     tz: str = "UTC"
     recording_size_threshold_mb: int = Field(default=25)
@@ -75,6 +75,7 @@ class Settings(BaseModel):
             controller_base_url=env.get("CONTROLLER_BASE_URL", "http://127.0.0.1:8788"),
             controller_db_path=Path(env.get("CONTROLLER_DB_PATH", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller" / "controller.db"))),
             artifacts_root=Path(env.get("ARTIFACTS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "artifacts"))),
+            debug_logs_root=Path(env.get("DEBUG_LOGS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "logs"))),
             recordings_root=Path(env.get("RECORDINGS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "recordings"))),
             controller_events_root=Path(env.get("CONTROLLER_EVENTS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller-events"))),
             desktop_sessions_root=Path(env.get("DESKTOP_SESSIONS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions"))),
@@ -109,7 +110,6 @@ class Settings(BaseModel):
                 for origin in env.get("CONTROLLER_CORS_ORIGINS", "").split(",")
                 if origin.strip()
             ],
-            fake_mode=env.get("FAKE_MODE", "false").lower() in {"1", "true", "yes", "on"},
             log_level=env.get("LOG_LEVEL", "INFO"),
             tz=env.get("TZ", "UTC"),
             recording_size_threshold_mb=int(env.get("RECORDING_SIZE_THRESHOLD_MB", "25")),

@@ -89,16 +89,12 @@ class DesktopSessionManager:
             container_name=f"thirdeye-desktop-{desktop_id}",
             browser_url=f"http://127.0.0.1:{browser_port}",
             agent_url=f"http://127.0.0.1:{agent_port}",
-            status="ready" if self.settings.fake_mode else "starting",
+            status="starting",
             created_at=isoformat(utcnow()) or "",
             active_job_id=None,
             active_job_state=None,
             error_message=None,
         )
-
-        if self.settings.fake_mode:
-            self._write_registry([*sessions, session])
-            return session
 
         try:
             started = self._start_container(session, browser_port=browser_port, agent_port=agent_port)
@@ -117,7 +113,7 @@ class DesktopSessionManager:
         if selected is None:
             raise DesktopSessionNotFoundError("isolated desktop not found")
 
-        if not self.settings.fake_mode and selected.container_id:
+        if selected.container_id:
             subprocess.run(["docker", "rm", "-f", selected.container_id], capture_output=True, text=True, check=False)
 
         destroyed = selected.model_copy(update={"status": "destroyed", "active_job_id": None, "active_job_state": None})
@@ -188,7 +184,7 @@ class DesktopSessionManager:
         self.registry_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def _refresh_session(self, session: DesktopSession) -> DesktopSession:
-        if self.settings.fake_mode or session.status in {"destroyed", "error"} or not session.container_id:
+        if session.status in {"destroyed", "error"} or not session.container_id:
             return session
 
         result = subprocess.run(
@@ -257,8 +253,6 @@ class DesktopSessionManager:
             f"SELKIES_MANUAL_WIDTH={os.environ.get('RECORDING_WIDTH', '1280')}",
             "-e",
             f"SELKIES_MANUAL_HEIGHT={os.environ.get('RECORDING_HEIGHT', '720')}",
-            "-e",
-            f"FAKE_CAPTURE={'1' if self.settings.fake_mode else '0'}",
             "-p",
             f"127.0.0.1:{browser_port}:3000",
             "-p",

@@ -1,5 +1,7 @@
 # OpenClaw Canonical Summary Implementation Plan
 
+> Archival note: this implementation plan records removed fake-summary and `FAKE_MODE` behavior. Current runtime docs describe real local services only; test doubles live under `tests/support` and are injected by tests.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make canonical `summary.md` generation always use the real OpenClaw LLM path and remove the fake and legacy summary implementation.

@@ -1,5 +1,7 @@
 # OpenClaw Canonical Summary Design
 
+> Archival note: this April 2026 design records removed fake-summary and `FAKE_MODE` behavior. It is not the current runtime contract. Current public docs define real OpenClaw-backed summaries and test-only doubles under `tests/support`.
+
 **Date:** 2026-04-18
 
 **Goal:** Remove the fake and legacy summary generation paths so canonical `summary.md` artifacts are always produced by the real OpenClaw-backed LLM flow.

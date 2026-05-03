@@ -64,7 +64,7 @@ def test_recovery_resumes_jobs_in_recoverable_post_stop_states(settings) -> None
     completed_job = runtime.jobs.create_job(JobCreate(title="Completed job"))
     failed_paths = runtime.artifacts.job_paths(failed_job.id)
     failed_paths.transcript_markdown.write_text("# Transcript\n\nRecovered\n", encoding="utf-8")
-    failed_paths.transcript_text.write_text("Recovered\n", encoding="utf-8")
+    failed_paths.transcript_json.write_text('{"segments":[]}\n', encoding="utf-8")
 
     runtime.jobs.update_runtime_fields(recovering_job.id, state=JobState.RECOVERING.value)
     runtime.jobs.update_runtime_fields(failed_job.id, state=JobState.FAILED.value)

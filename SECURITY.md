@@ -15,6 +15,8 @@ The macOS app starts local services on loopback addresses only:
 
 These ports are intended to be reachable only from the same computer. Do not expose them to a public network or bind them to `0.0.0.0`.
 
+The supported local product has no in-app authentication screen and accepts real provider settings at runtime. Tests that need simulated providers use explicit doubles under `tests/support`; those doubles are not activated by `.env` settings.
+
 ## Local Data Storage
 
 Data created by the macOS app stays on your local computer. The app workflow stores controller state, recordings, transcripts, summaries, artifacts, logs, and capture runtime files under:

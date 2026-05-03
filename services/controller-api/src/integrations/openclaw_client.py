@@ -104,7 +104,7 @@ class OpenClawClient:
 
     def _effective_summary_model(self, model: str | None) -> str:
         candidate = (model or "").strip()
-        if not candidate or candidate == "fake-summary":
+        if not candidate:
             return self.settings.openclaw_summary_model
         return candidate
 

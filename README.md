@@ -87,7 +87,7 @@ You will need the following runtime requirements configured before real captures
 
 `thirdeye` is designed to run locally on your Mac. The app stores recordings, transcripts, summaries, artifacts, logs, and runtime state on your computer, not in a thirdeye-hosted cloud service.
 
-See [docs/security.md](docs/security.md) for the local runtime model, storage locations, macOS permissions, and external provider notes.
+See [SECURITY.md](SECURITY.md) for the local runtime model, storage locations, macOS permissions, and external provider notes.
 
 ## Repository Layout
 
@@ -373,6 +373,8 @@ source .venv/bin/activate
 make test
 ```
 
+The application accepts real provider settings at runtime. Tests that need simulated services use explicit doubles under `tests/support` and inject them through test fixtures rather than enabling provider simulation from `.env`.
+
 ### Full source-built app tests
 
 ```bash
@@ -397,8 +399,9 @@ The command-line development workflow stores state in the repo:
 | `runtime/desktop-sessions/` | On-demand desktop session registry and per-desktop config |
 | `runtime/recordings/` | Shared recording output |
 | `runtime/artifacts/jobs/<job_id>/` | Final job artifacts |
+| `runtime/logs/jobs/<job_id>/` | Debug logs and raw transcript data |
 | `runtime/controller/controller.db` | SQLite controller database |
-| `runtime/controller-events/` | Controller event logs |
+| `runtime/controller-events/` | Legacy controller event root retained for compatibility |
 
 The macOS app workflow stores controller state, recordings, artifacts, logs, and capture runtime files under `~/Library/Application Support/thirdeye/`.
 
@@ -407,14 +410,15 @@ Final job artifacts are written to:
 ```text
 runtime/artifacts/jobs/<job_id>/
   recording.mp4
-  transcript.txt
   transcript.md
-  transcript.json
   summary.md
-  metadata.json
+runtime/logs/jobs/<job_id>/
+  transcript.json
   deepgram-events.jsonl
   controller-events.jsonl
 ```
+
+`metadata.json` may exist on disk for controller recovery and diagnostics, but it is not exposed as a downloadable artifact or shown in the frontend.
 
 ## License
 

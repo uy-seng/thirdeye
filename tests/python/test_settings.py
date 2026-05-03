@@ -5,6 +5,20 @@ from pathlib import Path
 from core.settings import Settings
 
 
+def test_settings_do_not_expose_runtime_fake_mode(monkeypatch) -> None:
+    monkeypatch.setenv("FAKE_MODE", "true")
+
+    settings = Settings.from_env()
+
+    assert not hasattr(settings, "fake_mode")
+
+
+def test_env_example_does_not_advertise_fake_mode() -> None:
+    env_example = Path(".env.example").read_text(encoding="utf-8")
+
+    assert "FAKE_MODE" not in env_example
+
+
 def test_settings_from_env_prefers_host_openclaw_config(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "openclaw.json"
     config_path.write_text(
@@ -48,6 +62,7 @@ def test_settings_from_env_defaults_silence_timeout_to_two_minutes(monkeypatch) 
 def test_settings_from_env_defaults_to_thirdeye_application_support(monkeypatch) -> None:
     monkeypatch.delenv("CONTROLLER_DB_PATH", raising=False)
     monkeypatch.delenv("ARTIFACTS_ROOT", raising=False)
+    monkeypatch.delenv("DEBUG_LOGS_ROOT", raising=False)
     monkeypatch.delenv("RECORDINGS_ROOT", raising=False)
     monkeypatch.delenv("CONTROLLER_EVENTS_ROOT", raising=False)
 
@@ -56,5 +71,6 @@ def test_settings_from_env_defaults_to_thirdeye_application_support(monkeypatch)
     assert settings.app_name == "thirdeye"
     assert settings.controller_db_path.parts[-4:] == ("Application Support", "thirdeye", "controller", "controller.db")
     assert settings.artifacts_root.parts[-3:] == ("Application Support", "thirdeye", "artifacts")
+    assert settings.debug_logs_root.parts[-3:] == ("Application Support", "thirdeye", "logs")
     assert settings.recordings_root.parts[-3:] == ("Application Support", "thirdeye", "recordings")
     assert settings.controller_events_root.parts[-3:] == ("Application Support", "thirdeye", "controller-events")

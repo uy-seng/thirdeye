@@ -2,14 +2,22 @@ import { Mic, Play, Save, Sparkles, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge, Button, Card, TextArea, TextInput } from "../../components/ui";
-import { generateVoiceNoteSummary, voiceNoteLiveUrl } from "../../lib/api";
+import {
+  deleteVoiceNote,
+  generateVoiceNoteSummary,
+  getVoiceNotes,
+  importVoiceNotes,
+  saveVoiceNote,
+  updateVoiceNote,
+  voiceNoteLiveUrl,
+} from "../../lib/api";
 import { getDefaultVoiceNoteSummaryPrompt } from "../../lib/prompts";
 import { encodeLinear16, mergedTranscriptText, mergeTranscriptEvent } from "../../lib/voice-note-audio";
 import {
+  clearLegacyVoiceNotes,
   createVoiceNote,
   formatVoiceNoteDuration,
-  loadVoiceNotes,
-  saveVoiceNotes,
+  loadLegacyVoiceNotes,
   type VoiceNote,
 } from "../../lib/voice-notes";
 import type { TranscriptBlock } from "../../lib/types";
@@ -39,7 +47,7 @@ function blobToDataUrl(blob: Blob) {
 }
 
 export function VoiceNotesPanel() {
-  const [notes, setNotes] = useState<VoiceNote[]>(() => loadVoiceNotes());
+  const [notes, setNotes] = useState<VoiceNote[]>([]);
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
   const [unsavedNoteIds, setUnsavedNoteIds] = useState<Set<string>>(() => new Set());
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
@@ -90,6 +98,32 @@ export function VoiceNotesPanel() {
   }, [liveTranscript]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadSavedNotes() {
+      try {
+        const legacyNotes = loadLegacyVoiceNotes();
+        const savedNotes = legacyNotes.length > 0 ? await importVoiceNotes(legacyNotes) : await getVoiceNotes();
+        if (legacyNotes.length > 0) {
+          clearLegacyVoiceNotes();
+        }
+        if (!cancelled) {
+          setNotes(savedNotes);
+        }
+      } catch {
+        if (!cancelled) {
+          setStatus("Could not load saved notes.");
+        }
+      }
+    }
+
+    void loadSavedNotes();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     draftRef.current = liveDraft;
   }, [liveDraft]);
 
@@ -133,21 +167,6 @@ export function VoiceNotesPanel() {
     audioSourceRef.current = null;
     silentGainRef.current = null;
     audioContextRef.current = null;
-  }
-
-  function persistNotes(nextNotes: VoiceNote[]) {
-    try {
-      saveVoiceNotes(nextNotes);
-      return { notes: nextNotes, status: null };
-    } catch {
-      const notesWithoutAudio = nextNotes.map((note) => (note.audioDataUrl ? { ...note, audioDataUrl: undefined } : note));
-      try {
-        saveVoiceNotes(notesWithoutAudio);
-        return { notes: notesWithoutAudio, status: "Saved transcript without audio." };
-      } catch {
-        return { notes: nextNotes, status: "Saved for now. Storage is full, so it may not be here after restart." };
-      }
-    }
   }
 
   function resetTranscriptionDone() {
@@ -329,13 +348,14 @@ export function VoiceNotesPanel() {
       audioDataUrl,
     });
 
+    let savedNote = note;
     let nextStatus = "Saved to notes";
-    setNotes((current) => {
-      const next = [note, ...current];
-      const result = persistNotes(next);
-      nextStatus = result.status ?? nextStatus;
-      return result.notes;
-    });
+    try {
+      savedNote = await saveVoiceNote(note);
+    } catch {
+      nextStatus = "Saved for now. Restart the local app service to keep new notes.";
+    }
+    setNotes((current) => [savedNote, ...current.filter((currentNote) => currentNote.id !== savedNote.id)]);
     setUnsavedNoteIds((current) => new Set(current).add(note.id));
     setExpandedNoteId(note.id);
     setLiveTranscript("");
@@ -347,11 +367,11 @@ export function VoiceNotesPanel() {
     mediaRecorderRef.current = null;
     closeLiveTranscription();
     finishingRef.current = false;
-    if (note.transcript) {
-      void summarizeVoiceNote(note);
+    if (savedNote.transcript) {
+      void summarizeVoiceNote(savedNote);
     } else {
       setSummaryState({
-        noteId: note.id,
+        noteId: savedNote.id,
         status: "idle",
         message: "No words were captured, so there is nothing to summarize yet.",
       });
@@ -380,16 +400,8 @@ export function VoiceNotesPanel() {
         provider: result.provider,
         generatedAt: new Date().toISOString(),
       };
-      let nextStatus: string | null = null;
-      setNotes((current) => {
-        const next = current.map((currentNote) => (currentNote.id === note.id ? { ...currentNote, summary } : currentNote));
-        const result = persistNotes(next);
-        nextStatus = result.status;
-        return result.notes;
-      });
-      if (nextStatus) {
-        setStatus(nextStatus);
-      }
+      const savedNote = await updateVoiceNote(note.id, { summary });
+      setNotes((current) => current.map((currentNote) => (currentNote.id === note.id ? savedNote : currentNote)));
       setSummaryState({ noteId: note.id, status: "ready", message: "Summary ready." });
     } catch (error) {
       setSummaryState({
@@ -402,17 +414,14 @@ export function VoiceNotesPanel() {
 
   function updateNote(noteId: string, updates: Partial<Pick<VoiceNote, "title" | "transcript">>) {
     setNotes((current) => {
-      const next = current.map((note) => (note.id === noteId ? { ...note, ...updates } : note));
-      const result = persistNotes(next);
-      return result.notes;
+      return current.map((note) => (note.id === noteId ? { ...note, ...updates } : note));
     });
+    setUnsavedNoteIds((current) => new Set(current).add(noteId));
   }
 
   function deleteNote(noteId: string) {
     setNotes((current) => {
-      const next = current.filter((note) => note.id !== noteId);
-      const result = persistNotes(next);
-      return result.notes;
+      return current.filter((note) => note.id !== noteId);
     });
     setUnsavedNoteIds((current) => {
       const next = new Set(current);
@@ -421,21 +430,39 @@ export function VoiceNotesPanel() {
     });
     setExpandedNoteId((current) => (current === noteId ? null : current));
     setSummaryState((current) => (current.noteId === noteId ? { noteId: null, status: "idle", message: "" } : current));
+    void deleteVoiceNote(noteId).catch(() => {
+      setStatus("Could not delete the saved note.");
+    });
   }
 
-  function saveNote(noteId: string) {
+  async function saveNote(noteId: string) {
     if (!unsavedNoteIds.has(noteId)) {
       return;
     }
-    const result = persistNotes(notes);
-    setNotes(result.notes);
+    const note = notes.find((candidate) => candidate.id === noteId);
+    if (!note) {
+      return;
+    }
+    try {
+      const savedNote = await updateVoiceNote(noteId, {
+        title: note.title,
+        transcript: note.transcript,
+        durationMs: note.durationMs,
+        audioDataUrl: note.audioDataUrl,
+        summary: note.summary,
+      });
+      setNotes((current) => current.map((currentNote) => (currentNote.id === noteId ? savedNote : currentNote)));
+    } catch {
+      setStatus("Could not save the note.");
+      return;
+    }
     setUnsavedNoteIds((current) => {
       const next = new Set(current);
       next.delete(noteId);
       return next;
     });
     setExpandedNoteId(null);
-    setStatus(result.status ?? "Saved to notes");
+    setStatus("Saved to notes");
   }
 
   function selectNote(note: VoiceNote) {
@@ -586,7 +613,7 @@ export function VoiceNotesPanel() {
                     {note.audioDataUrl ? <audio controls src={note.audioDataUrl} /> : null}
                     <div className="toolbar">
                       {canSave ? (
-                        <Button onClick={() => saveNote(note.id)} type="button" variant="secondary">
+                        <Button onClick={() => void saveNote(note.id)} type="button" variant="secondary">
                           <Save aria-hidden="true" size={16} />
                           Save
                         </Button>

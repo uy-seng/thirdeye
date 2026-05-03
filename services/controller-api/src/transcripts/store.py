@@ -33,6 +33,7 @@ class TranscriptStore:
         paths = self.artifacts.job_paths(job_id)
         with paths.deepgram_events.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(raw_event, sort_keys=True) + "\n")
+        self.artifacts.register_file(job_id, paths.deepgram_events, content_type="application/x-ndjson")
         normalized = normalize_deepgram_message(raw_event)
         snapshot = self._source_snapshots(job_id)[self._source_for_event(normalized)]
         promoted = self._apply_normalized_event(snapshot, normalized)

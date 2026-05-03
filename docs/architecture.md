@@ -19,3 +19,5 @@ Key rules:
 - Deepgram is backend-only.
 - All published ports bind to `127.0.0.1`.
 - Recording artifacts are preserved on failure.
+- The runtime uses real provider settings. Local and CI tests use explicit doubles under `tests/support`, injected by test fixtures.
+- The supported user interface is the Tauri app. Retired browser UI surfaces are not part of the current architecture.

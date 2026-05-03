@@ -17,12 +17,14 @@ make build
 make dev-api
 ```
 
-## Health
+## Service Checks
 
 - Controller: `curl -fsS http://127.0.0.1:8788/api/health`
 - Desktop sessions: `curl -fsS http://127.0.0.1:8788/api/desktops`
 - OpenClaw: `curl -fsS http://127.0.0.1:18789/healthz`
 - Supervisor: `make services-status`
+
+These are service endpoints and CLI checks, not browser diagnostic pages. Development tests use explicit doubles under `tests/support`; provider simulation is not enabled from `.env`.
 
 ## Smoke Test
 

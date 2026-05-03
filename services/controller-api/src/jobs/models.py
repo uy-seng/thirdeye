@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import Boolean, DateTime, Integer, Text
+from sqlalchemy import Boolean, DateTime, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.db import Base
@@ -54,6 +54,50 @@ class JobTransition(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class Operation(Base):
+    __tablename__ = "operations"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    job_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ArtifactManifest(Base):
+    __tablename__ = "artifact_manifest"
+    __table_args__ = (UniqueConstraint("job_id", "name", name="uq_artifact_manifest_job_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class VoiceNoteRow(Base):
+    __tablename__ = "voice_notes"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    transcript: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    audio_content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_provider: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 CaptureBackendName = Literal["docker_desktop", "macos_local"]
@@ -198,6 +242,88 @@ class TranscriptSummaryGenerateResponse(BaseModel):
 class VoiceNoteSummaryGenerateResponse(BaseModel):
     markdown: str
     provider: str
+
+
+def _copy_camel_keys(value: Any, mapping: dict[str, str]) -> Any:
+    if not isinstance(value, dict):
+        return value
+    copied = dict(value)
+    for camel_key, snake_key in mapping.items():
+        if camel_key in copied and snake_key not in copied:
+            copied[snake_key] = copied.pop(camel_key)
+    return copied
+
+
+class VoiceNoteSummary(BaseModel):
+    markdown: str
+    provider: str
+    generated_at: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_camel_keys(cls, value: Any) -> Any:
+        return _copy_camel_keys(value, {"generatedAt": "generated_at"})
+
+
+class VoiceNoteUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    transcript: str
+    created_at: str
+    duration_ms: int
+    audio_data_url: str | None = None
+    summary: VoiceNoteSummary | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_camel_keys(cls, value: Any) -> Any:
+        return _copy_camel_keys(
+            value,
+            {
+                "createdAt": "created_at",
+                "durationMs": "duration_ms",
+                "audioDataUrl": "audio_data_url",
+            },
+        )
+
+
+class VoiceNoteUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    transcript: str | None = None
+    duration_ms: int | None = None
+    audio_data_url: str | None = None
+    summary: VoiceNoteSummary | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_camel_keys(cls, value: Any) -> Any:
+        return _copy_camel_keys(
+            value,
+            {
+                "durationMs": "duration_ms",
+                "audioDataUrl": "audio_data_url",
+            },
+        )
+
+
+class VoiceNoteImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    notes: list[VoiceNoteUpsertRequest]
+
+
+class VoiceNoteResponse(BaseModel):
+    id: str
+    title: str
+    transcript: str
+    created_at: str
+    duration_ms: int
+    audio_data_url: str | None = None
+    summary: VoiceNoteSummary | None = None
 
 
 class ArtifactFile(BaseModel):

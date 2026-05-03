@@ -448,6 +448,7 @@ fn controller_api_command(repo_root: &Path, runtime_root: &Path) -> String {
          CONTROLLER_CORS_ORIGINS=http://127.0.0.1:1420,tauri://localhost \
          CONTROLLER_DB_PATH={} \
          ARTIFACTS_ROOT={} \
+         DEBUG_LOGS_ROOT={} \
          RECORDINGS_ROOT={} \
          CONTROLLER_EVENTS_ROOT={} \
          DESKTOP_SESSIONS_ROOT={} \
@@ -458,6 +459,7 @@ fn controller_api_command(repo_root: &Path, runtime_root: &Path) -> String {
         shell_escape_text(&service_pythonpath(repo_root)),
         shell_escape(&runtime_root.join("controller").join("controller.db")),
         shell_escape(&runtime_root.join("artifacts")),
+        shell_escape(&runtime_root.join("logs")),
         shell_escape(&runtime_root.join("recordings")),
         shell_escape(&runtime_root.join("controller-events")),
         shell_escape(&runtime_root.join("desktop-sessions")),

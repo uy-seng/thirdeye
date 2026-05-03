@@ -86,6 +86,22 @@ export type VoiceNoteSummaryGenerateResponse = {
   provider: string;
 };
 
+export type VoiceNoteSummary = {
+  markdown: string;
+  provider: string;
+  generatedAt: string;
+};
+
+export type VoiceNote = {
+  id: string;
+  title: string;
+  transcript: string;
+  createdAt: string;
+  durationMs: number;
+  audioDataUrl?: string | null;
+  summary?: VoiceNoteSummary | null;
+};
+
 export type LiveTranscriptSource = "system" | "microphone";
 
 export type LiveSourceSnapshot = {

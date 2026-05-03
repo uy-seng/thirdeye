@@ -6,7 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import create_app
+from capture.backends import CaptureBackendRegistry
 from core.settings import OPENCLAW_SUMMARY_MODEL_DEFAULT, Settings
+from tests.support.fakes import FakeDesktopPoolClient, FakeDesktopSessionManager, FakeMacOSCaptureClient, FakeRelayManager
 
 
 @pytest.fixture
@@ -16,6 +18,7 @@ def settings(tmp_path: Path) -> Settings:
         controller_base_url="http://127.0.0.1:8788",
         controller_db_path=tmp_path / "controller.db",
         artifacts_root=tmp_path / "artifacts",
+        debug_logs_root=tmp_path / "logs",
         recordings_root=tmp_path / "recordings",
         controller_events_root=tmp_path / "events",
         desktop_sessions_root=tmp_path / "desktop-sessions",
@@ -40,7 +43,6 @@ def settings(tmp_path: Path) -> Settings:
         max_duration_minutes=30,
         silence_timeout_minutes=5,
         enable_auto_stop=False,
-        fake_mode=True,
         log_level="DEBUG",
         tz="America/Chicago",
     )
@@ -50,6 +52,19 @@ def settings(tmp_path: Path) -> Settings:
 def client(settings: Settings) -> TestClient:
     app = create_app(settings)
     runtime = app.state.runtime
+    desktop_sessions = FakeDesktopSessionManager(settings)
+    capture_backends = CaptureBackendRegistry(
+        {
+            "docker_desktop": FakeDesktopPoolClient(settings, desktop_sessions),
+            "macos_local": FakeMacOSCaptureClient(settings),
+        }
+    )
+    runtime.desktop_sessions = desktop_sessions
+    runtime.capture_backends = capture_backends
+    runtime.desktop = capture_backends.require("docker_desktop")
+    runtime.capture.capture_backends = capture_backends
+    runtime.capture.desktop_client = capture_backends.require("docker_desktop")
+    runtime.capture.relay_manager = FakeRelayManager(runtime.capture.handle_deepgram_event)
 
     async def fake_generate_transcript_summary(
         *, prompt: str, transcript_text: str, title: str, model: str | None = None

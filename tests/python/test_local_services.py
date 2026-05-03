@@ -217,6 +217,7 @@ def test_controller_api_command_uses_host_openclaw_gateway(tmp_path: Path) -> No
     command = local_services.controller_api_command(tmp_path / "runtime")
 
     assert "OPENCLAW_BASE_URL=${LOCAL_OPENCLAW_BASE_URL:-http://127.0.0.1:18789}" in command
+    assert f"DEBUG_LOGS_ROOT={local_services.shell_escape(tmp_path / 'runtime' / 'logs')}" in command
     assert f"DESKTOP_SESSIONS_ROOT={local_services.shell_escape(tmp_path / 'runtime' / 'desktop-sessions')}" in command
     assert (
         f"DESKTOP_SESSIONS_REGISTRY_PATH={local_services.shell_escape(tmp_path / 'runtime' / 'desktop-sessions' / 'sessions.json')}"

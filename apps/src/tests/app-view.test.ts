@@ -122,12 +122,22 @@ test("clears the delete success notice after changing views", () => {
 });
 
 test("keeps refreshing a job after stop while the controller finishes in the background", () => {
+  const refreshStart = appSource.indexOf("async function refreshStoppedJobUntilSettled(jobId: string)");
+  const refreshEnd = appSource.indexOf("async function refreshControllerData()", refreshStart);
+  const refreshSource = appSource.slice(refreshStart, refreshEnd);
+
+  assert.notEqual(refreshStart, -1);
+  assert.notEqual(refreshEnd, -1);
   assert.match(appSource, /const stopRefreshIntervalMs = 1_500;/);
   assert.match(appSource, /const stopRefreshTimeoutMs = 180_000;/);
   assert.match(appSource, /async function refreshStoppedJobUntilSettled\(jobId: string\)/);
   assert.match(appSource, /while \(Date\.now\(\) < deadline\)/);
   assert.match(appSource, /if \(!ACTIVE_STATES\.has\(job\.state\)\)/);
   assert.match(appSource, /await refreshStoppedJobUntilSettled\(jobId\);/);
+  assert.ok(
+    refreshSource.indexOf("await loadDesktops();") > refreshSource.indexOf("const job = await getJob(jobId);"),
+    "desktop workspace status should refresh after each polled stop state",
+  );
 });
 
 test("created isolated desktops can be opened and destroyed from the capture workspace", () => {
@@ -194,7 +204,7 @@ test("start capture allows parallel desktops but blocks unavailable targets", ()
   assert.match(captureSource, /activeCaptures\?: JobResponse\[\]/);
   assert.match(appSource, /<StartCapturePanel[\s\S]*?activeCaptures=\{activeJobs\}[\s\S]*?onCreated=\{\(job\) => void handleCaptureCreated\(job\)\}/);
   assert.match(captureSource, /const selectedTargetUnavailable = selectedTarget\?\.available === false;/);
-  assert.match(captureSource, /const macCaptureBlocked = backend === "macos_local" && activeCaptures\.length > 0;/);
+  assert.match(captureSource, /const macCaptureBlocked =\s*backend === "macos_local" && activeCaptures\.some\(\(job\) => job\.capture_backend === "macos_local"\);/);
   assert.doesNotMatch(captureSource, /Stop the current session before starting a new one\./);
   assert.match(captureSource, /disabled=\{busy \|\| selectedTargetUnavailable \|\| macCaptureBlocked \|\| \(backend === "macos_local" && !selectedTarget\) \|\| \(backend === "docker_desktop" && !selectedTarget\)\}/);
   assert.match(captureSource, /\{busy \? "Starting\.\.\." : "Start capture"\}/);
@@ -316,6 +326,13 @@ test("start session exposes recording and summary options", () => {
   assert.match(captureSource, /generate_summary: generateSummary/);
 });
 
+test("start session hides checkbox options that are not available", () => {
+  assert.doesNotMatch(captureSource, /disabled=\{!canRecordMicrophone\}/);
+  assert.doesNotMatch(captureSource, /disabled=\{!canMuteTargetAudio\}/);
+  assert.match(captureSource, /\{canRecordMicrophone \? \(\s*<label className="option-row">/);
+  assert.match(captureSource, /\{canMuteTargetAudio \? \(\s*<label className="option-row">/);
+});
+
 test("live view exposes a runtime app mute toggle for active captures", () => {
   assert.match(appSource, /setTargetAudioMuted/);
   assert.match(appSource, /setRecordMicrophoneEnabled/);
@@ -356,8 +373,10 @@ test("voice notes are available as a separate recording workspace", () => {
   assert.match(voiceNotesSource, /new WebSocket\(voiceNoteLiveUrl\(\)\)/);
   assert.match(voiceNotesSource, /encodeLinear16/);
   assert.match(voiceNotesSource, /createVoiceNote/);
+  assert.match(voiceNotesSource, /saveVoiceNote/);
+  assert.match(voiceNotesSource, /getVoiceNotes/);
+  assert.match(voiceNotesSource, /importVoiceNotes/);
   assert.match(voiceNotesSource, /generateVoiceNoteSummary/);
-  assert.match(voiceNotesSource, /const next = \[note, \.\.\.current\];/);
   assert.match(voiceNotesSource, /Listening now/);
   assert.match(voiceNotesSource, /Saved to notes/);
   assert.match(voiceNotesSource, /Voice summary/);
@@ -368,7 +387,7 @@ test("voice notes are available as a separate recording workspace", () => {
 test("saved voice notes collapse to cards after their one-time save", () => {
   assert.match(voiceNotesSource, /const \[expandedNoteId, setExpandedNoteId\] = useState<string \| null>\(null\);/);
   assert.match(voiceNotesSource, /const \[unsavedNoteIds, setUnsavedNoteIds\] = useState<Set<string>>/);
-  assert.match(voiceNotesSource, /function saveNote\(noteId: string\)/);
+  assert.match(voiceNotesSource, /async function saveNote\(noteId: string\)/);
   assert.match(voiceNotesSource, /setExpandedNoteId\(\(current\) => \(current === noteId \? null : current\)\)/);
   assert.match(voiceNotesSource, /setExpandedNoteId\(null\);/);
   assert.match(voiceNotesSource, /unsavedNoteIds\.has\(note\.id\)/);
