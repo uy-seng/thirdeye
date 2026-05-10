@@ -40,6 +40,22 @@ def test_custom_tauri_dev_script_refreshes_bundled_capture_helper() -> None:
     assert 'cp "${HELPER_SOURCE}" "${HELPER_RESOURCE}"' in source
 
 
+def test_macos_app_microphone_usage_copy_mentions_voice_notes() -> None:
+    info_plist = (ROOT / "apps" / "tauri" / "Info.plist").read_text(encoding="utf-8")
+
+    assert "NSMicrophoneUsageDescription" in info_plist
+    assert "voice notes" in info_plist
+
+
+def test_macos_app_build_target_builds_and_opens_dmg() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "MACOS_APP_DMG_DIR ?= $(MACOS_APP_DIR)/tauri/target/release/bundle/dmg" in makefile
+    assert 'npm run build -- --bundles dmg' in makefile
+    assert 'find "$(MACOS_APP_DMG_DIR)" -maxdepth 1 -type f -name \'*.dmg\'' in makefile
+    assert 'open "$$dmg_path"' in makefile
+
+
 def test_tauri_controller_api_command_uses_runtime_logs_root() -> None:
     source = (ROOT / "apps" / "tauri" / "src" / "local_services.rs").read_text(encoding="utf-8")
     start = source.index("fn controller_api_command")

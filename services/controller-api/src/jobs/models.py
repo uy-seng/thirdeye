@@ -180,6 +180,7 @@ class JobCreate(BaseModel):
     summary_model: str | None = None
     record_screen: bool = True
     record_microphone: bool = False
+    echo_cancellation_enabled: bool = False
     generate_summary: bool = True
     mute_target_audio: bool = False
     notify_on_inactivity: bool = True
@@ -189,6 +190,11 @@ class JobCreate(BaseModel):
     @model_validator(mode="after")
     def validate_capture_selection(self) -> "JobCreate":
         resolve_capture_selection(self.capture_backend, self.capture_target)
+        if self.echo_cancellation_enabled:
+            if not self.record_microphone:
+                raise ValueError("echo_cancellation_enabled requires record_microphone")
+            if self.capture_backend != "macos_local":
+                raise ValueError("echo_cancellation_enabled is only supported for This Mac capture")
         if self.record_microphone and self.capture_backend != "macos_local":
             raise ValueError("record_microphone is only supported for This Mac capture")
         if self.record_microphone and self.mute_target_audio:
@@ -225,6 +231,11 @@ class JobMuteTargetAudioRequest(BaseModel):
 
 class JobRecordMicrophoneRequest(BaseModel):
     record_microphone: bool
+    echo_cancellation_enabled: bool | None = None
+
+
+class JobEchoCancellationRequest(BaseModel):
+    echo_cancellation_enabled: bool
 
 
 class TranscriptSummarySource(BaseModel):

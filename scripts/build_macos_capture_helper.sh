@@ -9,15 +9,36 @@ SIGNING_IDENTIFIER="${MACOS_CAPTURE_HELPER_IDENTIFIER:-com.thirdeye.macos-captur
 
 mkdir -p "${OUTPUT_DIR}"
 
+if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config speexdsp >/dev/null 2>&1; then
+  printf 'Missing SpeexDSP build dependency. Install it with: brew install speexdsp pkg-config\n' >&2
+  exit 1
+fi
+
+SPEEX_MODULE_DIR="${OUTPUT_DIR}/CSpeexDSP"
+SPEEX_INCLUDE_DIR="$(pkg-config --variable=includedir speexdsp)"
+mkdir -p "${SPEEX_MODULE_DIR}"
+cat > "${SPEEX_MODULE_DIR}/module.modulemap" <<EOF
+module CSpeexDSP [system] {
+  header "${SPEEX_INCLUDE_DIR}/speex/speex_echo.h"
+  export *
+}
+EOF
+
+IFS=' ' read -r -a SPEEX_CFLAGS <<< "$(pkg-config --cflags speexdsp)"
+IFS=' ' read -r -a SPEEX_LIBS <<< "$(pkg-config --libs speexdsp)"
+
 xcrun swiftc \
   -parse-as-library \
   -O \
+  -I "${SPEEX_MODULE_DIR}" \
+  "${SPEEX_CFLAGS[@]}" \
   -framework AppKit \
   -framework AVFoundation \
   -framework CoreAudio \
   -framework CoreMedia \
   -framework ScreenCaptureKit \
   "${SOURCE_FILE}" \
+  "${SPEEX_LIBS[@]}" \
   -o "${OUTPUT_FILE}"
 
 codesign --force --sign - --identifier "${SIGNING_IDENTIFIER}" "${OUTPUT_FILE}"

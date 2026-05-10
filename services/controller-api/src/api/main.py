@@ -18,6 +18,9 @@ from capture.desktop_sessions import (
     DesktopSessionsResponse,
 )
 from jobs.jobs import (
+    CaptureEchoCancellationError,
+    CaptureEchoCancellationStateError,
+    CaptureEchoCancellationUnsupportedError,
     CaptureConflictError,
     CaptureMicrophoneError,
     CaptureMicrophoneStateError,
@@ -32,6 +35,7 @@ from jobs.models import (
     ArtifactsOverviewResponse,
     CaptureTargetsResponse,
     JobCreate,
+    JobEchoCancellationRequest,
     JobMuteTargetAudioRequest,
     JobRecordMicrophoneRequest,
     JobResponse,
@@ -309,7 +313,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: JobRecordMicrophoneRequest,
     ) -> JSONResponse:
         try:
-            job = await runtime.capture.set_record_microphone_enabled(job_id, payload.record_microphone)
+            job = await runtime.capture.set_record_microphone_enabled(
+                job_id,
+                payload.record_microphone,
+                payload.echo_cancellation_enabled,
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="job not found") from exc
         except CaptureMicrophoneUnsupportedError as exc:
@@ -317,6 +325,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except CaptureMicrophoneStateError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except CaptureMicrophoneError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=502)
+        return JSONResponse(job.model_dump())
+
+    @app.post("/api/jobs/{job_id}/echo-cancellation")
+    async def echo_cancellation(
+        job_id: str,
+        payload: JobEchoCancellationRequest,
+    ) -> JSONResponse:
+        try:
+            job = await runtime.capture.set_echo_cancellation_enabled(job_id, payload.echo_cancellation_enabled)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
+        except CaptureEchoCancellationUnsupportedError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except CaptureEchoCancellationStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except CaptureEchoCancellationError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=502)
         return JSONResponse(job.model_dump())
 

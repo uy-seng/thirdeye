@@ -12,7 +12,16 @@ import {
   voiceNoteLiveUrl,
 } from "../../lib/api";
 import { getDefaultVoiceNoteSummaryPrompt } from "../../lib/prompts";
-import { encodeLinear16, mergedTranscriptText, mergeTranscriptEvent } from "../../lib/voice-note-audio";
+import { openMicrophoneSettings, requestMicrophoneAccess } from "../../lib/services";
+import {
+  encodeLinear16,
+  formatVoiceNoteRecordingError,
+  isAudibleMicrophoneInput,
+  isVoiceNoteMicrophoneAccessBlocked,
+  isVoiceNoteTranscriptTextEvent,
+  mergedTranscriptText,
+  mergeTranscriptEvent,
+} from "../../lib/voice-note-audio";
 import {
   clearLegacyVoiceNotes,
   createVoiceNote,
@@ -23,6 +32,7 @@ import {
 import type { TranscriptBlock } from "../../lib/types";
 
 type RecordingState = "idle" | "recording" | "saving";
+type MicrophoneSignalState = "waiting" | "active" | "quiet";
 type SummaryStatus = "idle" | "generating" | "ready" | "error";
 type SummaryState = {
   noteId: string | null;
@@ -32,6 +42,16 @@ type SummaryState = {
 
 const recorderIntervalMs = 250;
 const transcriptionTimeoutMs = 5_000;
+const microphoneSignalQuietAfterMs = 3_000;
+const microphoneSignalUpdateIntervalMs = 500;
+const voiceNoteAudioConstraints = {
+  audio: {
+    channelCount: 1,
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: true,
+  },
+} satisfies MediaStreamConstraints;
 
 function createId() {
   return globalThis.crypto?.randomUUID?.() ?? `voice-note-${Date.now()}`;
@@ -53,6 +73,9 @@ export function VoiceNotesPanel() {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [summaryState, setSummaryState] = useState<SummaryState>({ noteId: null, status: "idle", message: "" });
   const [status, setStatus] = useState("Ready");
+  const [recordingIssue, setRecordingIssue] = useState("");
+  const [microphoneAccessBlocked, setMicrophoneAccessBlocked] = useState(false);
+  const [microphoneSignal, setMicrophoneSignal] = useState<MicrophoneSignalState>("waiting");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [liveDraft, setLiveDraft] = useState("");
@@ -62,7 +85,6 @@ export function VoiceNotesPanel() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
-  const silentGainRef = useRef<GainNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const startedAtRef = useRef(0);
   const timerRef = useRef<number | null>(null);
@@ -70,6 +92,7 @@ export function VoiceNotesPanel() {
   const finishingRef = useRef(false);
   const transcriptRef = useRef("");
   const draftRef = useRef("");
+  const lastSignalUpdateAtRef = useRef(0);
   const transcriptionDoneRef = useRef<Promise<void>>(Promise.resolve());
   const resolveTranscriptionDoneRef = useRef<(() => void) | null>(null);
 
@@ -81,6 +104,20 @@ export function VoiceNotesPanel() {
   const activeSummary = activeSummaryNote?.summary ?? null;
   const canRecord = recordingState === "idle";
   const isRecording = recordingState === "recording";
+  const recorderBadgeTone: "neutral" | "good" | "bad" | "info" = isRecording
+    ? "info"
+    : recordingIssue
+      ? "bad"
+      : status === "Saved to notes"
+        ? "good"
+        : "neutral";
+  const recorderBadgeLabel = recordingIssue ? "Needs microphone" : status;
+  const microphoneBadgeTone: "neutral" | "good" | "warn" | "info" =
+    microphoneSignal === "active" ? "good" : microphoneSignal === "quiet" ? "warn" : "info";
+  const microphoneBadgeLabel =
+    microphoneSignal === "active" ? "Hearing mic" : microphoneSignal === "quiet" ? "No microphone sound yet" : "Ready for voice";
+  const liveNotePlaceholder =
+    isRecording && microphoneSignal === "active" ? "Listening for words..." : "Your words will appear here while you talk.";
   const summaryBadgeTone: "neutral" | "good" | "bad" | "info" =
     summaryState.status === "generating" ? "info" : summaryState.status === "error" ? "bad" : activeSummary ? "good" : "neutral";
   const summaryBadgeLabel =
@@ -161,11 +198,9 @@ export function VoiceNotesPanel() {
   function stopLiveAudioGraph() {
     audioProcessorRef.current?.disconnect();
     audioSourceRef.current?.disconnect();
-    silentGainRef.current?.disconnect();
     void audioContextRef.current?.close().catch(() => undefined);
     audioProcessorRef.current = null;
     audioSourceRef.current = null;
-    silentGainRef.current = null;
     audioContextRef.current = null;
   }
 
@@ -177,6 +212,13 @@ export function VoiceNotesPanel() {
 
   function handleTranscriptEvent(event: TranscriptBlock) {
     if (event.type === "interim" || event.type === "final") {
+      setMicrophoneSignal("active");
+      if (!isVoiceNoteTranscriptTextEvent(event)) {
+        if (!transcriptRef.current && !draftRef.current) {
+          setStatus("Waiting for words");
+        }
+        return;
+      }
       const next = mergeTranscriptEvent(
         {
           transcript: transcriptRef.current,
@@ -208,7 +250,7 @@ export function VoiceNotesPanel() {
     const websocket = new WebSocket(voiceNoteLiveUrl());
     websocket.binaryType = "arraybuffer";
     websocketRef.current = websocket;
-    websocket.onopen = () => setStatus("Listening now");
+    websocket.onopen = () => setStatus("Ready for your voice");
     websocket.onerror = () => {
       setStatus("Live note connection stopped.");
       resolveTranscriptionDoneRef.current?.();
@@ -230,22 +272,43 @@ export function VoiceNotesPanel() {
     const audioContext = new AudioContext();
     const source = audioContext.createMediaStreamSource(stream);
     const processor = audioContext.createScriptProcessor(4096, 1, 1);
-    const silentGain = audioContext.createGain();
-    silentGain.gain.value = 0;
     processor.onaudioprocess = (event) => {
+      event.outputBuffer.getChannelData(0).fill(0);
+      const samples = event.inputBuffer.getChannelData(0);
+      updateMicrophoneSignal(samples);
       if (!recordingRef.current || websocket.readyState !== WebSocket.OPEN) {
         return;
       }
-      const samples = event.inputBuffer.getChannelData(0);
       websocket.send(encodeLinear16(samples, audioContext.sampleRate));
     };
     source.connect(processor);
-    processor.connect(silentGain);
-    silentGain.connect(audioContext.destination);
+    processor.connect(audioContext.destination);
+    await audioContext.resume();
     audioContextRef.current = audioContext;
     audioSourceRef.current = source;
     audioProcessorRef.current = processor;
-    silentGainRef.current = silentGain;
+  }
+
+  function updateMicrophoneSignal(samples: Float32Array) {
+    const now = Date.now();
+    if (now - lastSignalUpdateAtRef.current < microphoneSignalUpdateIntervalMs) {
+      return;
+    }
+    lastSignalUpdateAtRef.current = now;
+
+    const hasTranscriptText = Boolean(transcriptRef.current || draftRef.current);
+    if (isAudibleMicrophoneInput(samples)) {
+      setMicrophoneSignal("active");
+      if (!hasTranscriptText) {
+        setStatus("Waiting for words");
+      }
+      return;
+    }
+
+    if (!hasTranscriptText && now - startedAtRef.current >= microphoneSignalQuietAfterMs) {
+      setMicrophoneSignal("quiet");
+      setStatus("No microphone sound yet");
+    }
   }
 
   async function startRecording() {
@@ -253,18 +316,26 @@ export function VoiceNotesPanel() {
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setStatus("Voice recording is not available in this window.");
+      setRecordingIssue("Voice recording is not available in this window.");
+      setMicrophoneAccessBlocked(false);
       return;
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setRecordingIssue("");
+      setMicrophoneAccessBlocked(false);
+      const microphoneAllowed = await requestMicrophoneAccess();
+      if (!microphoneAllowed) {
+        throw new DOMException("Microphone permission was denied.", "NotAllowedError");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia(voiceNoteAudioConstraints);
       const recorder = new MediaRecorder(stream);
 
       chunksRef.current = [];
       streamRef.current = stream;
       mediaRecorderRef.current = recorder;
       startedAtRef.current = Date.now();
+      lastSignalUpdateAtRef.current = 0;
       recordingRef.current = true;
       finishingRef.current = false;
       transcriptRef.current = "";
@@ -272,6 +343,7 @@ export function VoiceNotesPanel() {
       setElapsedMs(0);
       setLiveTranscript("");
       setLiveDraft("");
+      setMicrophoneSignal("waiting");
       setStatus("Connecting live note...");
       setRecordingState("recording");
 
@@ -291,7 +363,9 @@ export function VoiceNotesPanel() {
         setElapsedMs(Date.now() - startedAtRef.current);
       }, 250);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Unable to start voice recording.");
+      setRecordingIssue(formatVoiceNoteRecordingError(error));
+      setMicrophoneAccessBlocked(isVoiceNoteMicrophoneAccessBlocked(error));
+      setStatus("Ready");
       setRecordingState("idle");
       recordingRef.current = false;
       closeLiveTranscription();
@@ -360,6 +434,9 @@ export function VoiceNotesPanel() {
     setExpandedNoteId(note.id);
     setLiveTranscript("");
     setLiveDraft("");
+    setRecordingIssue("");
+    setMicrophoneAccessBlocked(false);
+    setMicrophoneSignal("waiting");
     setElapsedMs(0);
     setStatus(nextStatus);
     setRecordingState("idle");
@@ -490,7 +567,7 @@ export function VoiceNotesPanel() {
             <p className="eyebrow">Voice notes</p>
             <h2>Record a note</h2>
           </div>
-          <Badge tone={isRecording ? "info" : status === "Saved to notes" ? "good" : "neutral"}>{status}</Badge>
+          <Badge tone={recorderBadgeTone}>{recorderBadgeLabel}</Badge>
         </div>
         <div className={isRecording ? "voice-recorder-surface voice-recorder-surface-active" : "voice-recorder-surface"}>
           <div className="voice-recorder-meter" aria-hidden="true">
@@ -501,7 +578,7 @@ export function VoiceNotesPanel() {
           </div>
           <div className="voice-recorder-copy">
             <strong>{formatVoiceNoteDuration(elapsedMs)}</strong>
-            <span>{isRecording ? "Listening now" : "Ready when you are"}</span>
+            <span>{isRecording ? status : "Ready when you are"}</span>
           </div>
           <div className="toolbar">
             <Button disabled={!canRecord} onClick={() => void startRecording()} type="button">
@@ -514,12 +591,25 @@ export function VoiceNotesPanel() {
             </Button>
           </div>
         </div>
+        {recordingIssue ? (
+          <div className="permission-notice voice-recorder-permission" role="alert">
+            <p className="permission-title">Recording could not start</p>
+            <p className="permission-copy">{recordingIssue}</p>
+            {microphoneAccessBlocked ? (
+              <Button onClick={() => void openMicrophoneSettings()} type="button" variant="secondary">
+                <Mic aria-hidden="true" size={16} />
+                Open microphone settings
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         <div className="voice-live-note">
           <div className="card-heading-row">
             <p className="eyebrow">Live note</p>
+            {isRecording && !previewText ? <Badge tone={microphoneBadgeTone}>{microphoneBadgeLabel}</Badge> : null}
             {liveDraft ? <Badge tone="warn">Still listening</Badge> : null}
           </div>
-          <p>{previewText || "Your words will appear here while you talk."}</p>
+          <p>{previewText || liveNotePlaceholder}</p>
         </div>
       </Card>
 

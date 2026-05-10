@@ -208,6 +208,7 @@ def test_start_job_failure_marks_job_failed_and_allows_retry(client, monkeypatch
         target: dict[str, object],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
     ) -> dict[str, object]:
         raise httpx.ReadTimeout("timed out")
 
@@ -339,6 +340,7 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
         target: dict[str, object],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
     ) -> dict[str, object]:
         calls.append(("recording", mute_target_audio))
         return {"pid": 1111, "output_file": output_file}
@@ -348,6 +350,7 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
         target: dict[str, object],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
     ) -> dict[str, object]:
         calls.append(("live_audio", mute_target_audio))
         return {"pid": 2222}
@@ -387,6 +390,7 @@ def test_start_job_forwards_microphone_preference_without_muting_target_audio(cl
         target: dict[str, object],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
     ) -> dict[str, object]:
         calls.append(("recording", mute_target_audio, record_microphone))
         return {"pid": 1111, "output_file": output_file}
@@ -396,6 +400,7 @@ def test_start_job_forwards_microphone_preference_without_muting_target_audio(cl
         target: dict[str, object],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
     ) -> dict[str, object]:
         calls.append(("live_audio", mute_target_audio, record_microphone))
         return {"pid": 2222}
@@ -421,6 +426,77 @@ def test_start_job_forwards_microphone_preference_without_muting_target_audio(cl
     assert response.status_code == 200
     assert calls == [("recording", False, True), ("live_audio", False, True)]
     assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
+
+
+def test_start_job_forwards_echo_cancellation_with_microphone_capture(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    backend = runtime.capture.capture_backends.require("macos_local")
+    calls: list[tuple[str, bool, bool, bool]] = []
+
+    async def start_recording(
+        job_id: str,
+        output_file: str,
+        target: dict[str, object],
+        mute_target_audio: bool = False,
+        record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
+    ) -> dict[str, object]:
+        calls.append(("recording", mute_target_audio, record_microphone, echo_cancellation_enabled))
+        return {"pid": 1111, "output_file": output_file}
+
+    async def start_live_audio(
+        job_id: str,
+        target: dict[str, object],
+        mute_target_audio: bool = False,
+        record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
+    ) -> dict[str, object]:
+        calls.append(("live_audio", mute_target_audio, record_microphone, echo_cancellation_enabled))
+        return {"pid": 2222}
+
+    monkeypatch.setattr(backend, "start_recording", start_recording)
+    monkeypatch.setattr(backend, "start_live_audio", start_live_audio)
+
+    response = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "Echo reduced capture",
+            "capture_backend": "macos_local",
+            "record_microphone": True,
+            "echo_cancellation_enabled": True,
+            "capture_target": {
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls == [("recording", False, True, True), ("live_audio", False, True, True)]
+    assert response.json()["metadata_json"]["session_preferences"]["echo_cancellation_enabled"] is True
+
+
+def test_start_job_rejects_echo_cancellation_without_microphone(client) -> None:
+    response = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "Invalid echo capture",
+            "capture_backend": "macos_local",
+            "record_microphone": False,
+            "echo_cancellation_enabled": True,
+            "capture_target": {
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "echo_cancellation_enabled requires record_microphone" in response.text
 
 
 def test_start_job_with_microphone_starts_system_and_microphone_relays(client, monkeypatch) -> None:
@@ -633,13 +709,122 @@ def test_record_microphone_endpoint_updates_active_local_capture_after_backend_a
     monkeypatch.setattr(backend, "set_record_microphone_enabled", set_record_microphone_enabled)
     monkeypatch.setattr(runtime.capture.relay_manager, "start", fake_start)
 
-    response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": True})
+    response = client.post(
+        f"/api/jobs/{job.id}/record-microphone",
+        json={"record_microphone": True},
+    )
 
     assert response.status_code == 200
     assert calls == [(job.id, True)]
     assert started_sources == ["microphone"]
     assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
     assert runtime.jobs.get_job(job.id).metadata_json["session_preferences"]["record_microphone"] is True
+
+
+def test_record_microphone_endpoint_defaults_echo_cancellation_on_when_enabling(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(
+        JobCreate(
+            title="Runtime microphone echo",
+            capture_backend="macos_local",
+            capture_target={
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        )
+    )
+    runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "test")
+    backend = runtime.capture_backends.require("macos_local")
+    microphone_calls: list[tuple[str, bool]] = []
+    echo_calls: list[tuple[str, bool]] = []
+
+    async def set_record_microphone_enabled(job_id: str, target: dict[str, object], record_microphone: bool) -> dict[str, object]:
+        microphone_calls.append((job_id, record_microphone))
+        return {"pid": 4321, "record_microphone": record_microphone}
+
+    async def set_echo_cancellation_enabled(job_id: str, target: dict[str, object], echo_cancellation_enabled: bool) -> dict[str, object]:
+        echo_calls.append((job_id, echo_cancellation_enabled))
+        return {"pid": 4321, "echo_cancellation_enabled": echo_cancellation_enabled}
+
+    async def fake_start(job_id: str, stream_factory, job_options: dict[str, object], source: str = "system") -> None:
+        return None
+
+    monkeypatch.setattr(backend, "set_record_microphone_enabled", set_record_microphone_enabled)
+    monkeypatch.setattr(backend, "set_echo_cancellation_enabled", set_echo_cancellation_enabled)
+    monkeypatch.setattr(runtime.capture.relay_manager, "start", fake_start)
+
+    response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": True})
+
+    assert response.status_code == 200
+    assert microphone_calls == [(job.id, True)]
+    assert echo_calls == [(job.id, True)]
+    assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
+    assert response.json()["metadata_json"]["session_preferences"]["echo_cancellation_enabled"] is True
+
+
+def test_echo_cancellation_endpoint_updates_active_local_microphone_capture_after_backend_ack(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(
+        JobCreate(
+            title="Runtime echo",
+            capture_backend="macos_local",
+            record_microphone=True,
+            echo_cancellation_enabled=False,
+            capture_target={
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        )
+    )
+    runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "test")
+    backend = runtime.capture_backends.require("macos_local")
+    calls: list[tuple[str, bool]] = []
+
+    async def set_echo_cancellation_enabled(job_id: str, target: dict[str, object], echo_cancellation_enabled: bool) -> dict[str, object]:
+        calls.append((job_id, echo_cancellation_enabled))
+        return {"pid": 4321, "echo_cancellation_enabled": echo_cancellation_enabled}
+
+    monkeypatch.setattr(backend, "set_echo_cancellation_enabled", set_echo_cancellation_enabled)
+
+    response = client.post(f"/api/jobs/{job.id}/echo-cancellation", json={"echo_cancellation_enabled": True})
+
+    assert response.status_code == 200
+    assert calls == [(job.id, True)]
+    assert response.json()["metadata_json"]["session_preferences"]["echo_cancellation_enabled"] is True
+    assert runtime.jobs.get_job(job.id).metadata_json["session_preferences"]["echo_cancellation_enabled"] is True
+
+
+def test_echo_cancellation_endpoint_rejects_capture_without_microphone(client) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(
+        JobCreate(
+            title="Runtime echo without microphone",
+            capture_backend="macos_local",
+            capture_target={
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        )
+    )
+    runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
+
+    response = client.post(f"/api/jobs/{job.id}/echo-cancellation", json={"echo_cancellation_enabled": True})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "turn on microphone recording before enabling echo cancellation"}
 
 
 def test_record_microphone_endpoint_stops_only_microphone_relay_when_disabled(client, monkeypatch) -> None:
@@ -707,7 +892,10 @@ def test_record_microphone_endpoint_is_idempotent_when_state_already_matches(cli
 
     monkeypatch.setattr(backend, "set_record_microphone_enabled", unexpected_set_record_microphone_enabled)
 
-    response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": True})
+    response = client.post(
+        f"/api/jobs/{job.id}/record-microphone",
+        json={"record_microphone": True, "echo_cancellation_enabled": False},
+    )
 
     assert response.status_code == 200
     assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True

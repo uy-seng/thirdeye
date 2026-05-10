@@ -7,6 +7,6 @@
   <key>NSAudioCaptureUsageDescription</key>
   <string>thirdeye needs system audio access to transcribe selected apps while they are muted for you.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>thirdeye needs microphone access when you choose to record your microphone during a capture.</string>
+  <string>thirdeye needs microphone access when you choose to record voice notes or include your microphone during a capture.</string>
 </dict>
 </plist>

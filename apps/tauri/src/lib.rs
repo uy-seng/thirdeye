@@ -13,6 +13,8 @@ pub fn run() {
             local_services::stop_services,
             local_services::service_status,
             app_commands::open_screen_recording_settings,
+            app_commands::request_microphone_access,
+            app_commands::open_microphone_settings,
             silence_notifications::start_silence_notification_monitor,
             silence_notifications::record_silence_notification_activity,
             silence_notifications::stop_silence_notification_monitor,

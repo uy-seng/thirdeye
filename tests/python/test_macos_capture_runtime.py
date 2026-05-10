@@ -304,6 +304,10 @@ def test_start_recording_uses_recording_helper(tmp_path: Path, monkeypatch) -> N
         str(tmp_path / "recording.microphone-command.json"),
         "--microphone-state-file",
         str(tmp_path / "recording.microphone-state.json"),
+        "--echo-cancellation-command-file",
+        str(tmp_path / "recording.echo-cancellation-command.json"),
+        "--echo-cancellation-state-file",
+        str(tmp_path / "recording.echo-cancellation-state.json"),
         "--target-json",
         '{"id":"display:1","kind":"display","label":"Display 1","app_bundle_id":null,"app_name":null,"app_pid":null,"window_id":null,"display_id":"1"}',
     ]
@@ -372,6 +376,39 @@ def test_start_recording_passes_microphone_flag_to_helper(tmp_path: Path, monkey
     )
 
     assert "--record-microphone" in captured["args"]
+
+
+def test_start_recording_passes_echo_cancellation_flag_and_command_files_to_helper(tmp_path: Path, monkeypatch) -> None:
+    runtime = MacOSCaptureRuntime()
+    runtime.runtime_dir = tmp_path
+    captured: dict[str, object] = {}
+
+    def fake_start(
+        args: list[str],
+        pid_file: Path,
+        log_file: Path,
+        startup_grace_seconds: float | None = None,
+    ) -> None:
+        captured["args"] = args
+        pid_file.write_text("1234", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "_start_long_running_helper", fake_start)
+
+    asyncio.run(
+        runtime.start_recording(
+            "job-123",
+            str(tmp_path / "recording.mp4"),
+            {"id": "display:1", "kind": "display", "label": "Display 1", "display_id": "1"},
+            record_microphone=True,
+            echo_cancellation_enabled=True,
+        )
+    )
+
+    assert "--echo-cancellation" in captured["args"]
+    assert "--echo-cancellation-command-file" in captured["args"]
+    assert str(tmp_path / "recording.echo-cancellation-command.json") in captured["args"]
+    assert "--echo-cancellation-state-file" in captured["args"]
+    assert str(tmp_path / "recording.echo-cancellation-state.json") in captured["args"]
 
 
 def test_start_live_audio_reuses_recording_helper_fifo(tmp_path: Path, monkeypatch) -> None:
@@ -496,6 +533,10 @@ def test_start_live_audio_uses_dedicated_audio_helper_without_recording(tmp_path
         str(tmp_path / "live-audio.microphone-command.json"),
         "--microphone-state-file",
         str(tmp_path / "live-audio.microphone-state.json"),
+        "--echo-cancellation-command-file",
+        str(tmp_path / "live-audio.echo-cancellation-command.json"),
+        "--echo-cancellation-state-file",
+        str(tmp_path / "live-audio.echo-cancellation-state.json"),
         "--target-json",
         '{"id":"display:1","kind":"display","label":"Display 1","app_bundle_id":null,"app_name":null,"app_pid":null,"window_id":null,"display_id":"1"}',
     ]
@@ -567,6 +608,38 @@ def test_start_live_audio_passes_microphone_flag_to_helper(tmp_path: Path, monke
     )
 
     assert "--record-microphone" in captured["args"]
+
+
+def test_start_live_audio_passes_echo_cancellation_flag_and_command_files_to_helper(tmp_path: Path, monkeypatch) -> None:
+    runtime = MacOSCaptureRuntime()
+    runtime.runtime_dir = tmp_path
+    captured: dict[str, object] = {}
+
+    def fake_start(
+        args: list[str],
+        pid_file: Path,
+        log_file: Path,
+        startup_grace_seconds: float | None = None,
+    ) -> None:
+        captured["args"] = args
+        pid_file.write_text("5678", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "_start_long_running_helper", fake_start)
+
+    asyncio.run(
+        runtime.start_live_audio(
+            "job-123",
+            {"id": "display:1", "kind": "display", "label": "Display 1", "display_id": "1"},
+            record_microphone=True,
+            echo_cancellation_enabled=True,
+        )
+    )
+
+    assert "--echo-cancellation" in captured["args"]
+    assert "--echo-cancellation-command-file" in captured["args"]
+    assert str(tmp_path / "live-audio.echo-cancellation-command.json") in captured["args"]
+    assert "--echo-cancellation-state-file" in captured["args"]
+    assert str(tmp_path / "live-audio.echo-cancellation-state.json") in captured["args"]
 
 
 def test_set_target_audio_muted_uses_recording_helper_when_recording_is_running(tmp_path: Path, monkeypatch) -> None:
@@ -694,6 +767,29 @@ def test_set_record_microphone_enabled_writes_command_and_waits_for_matching_sta
     assert writes[0]["state_file"] == tmp_path / "live-audio.microphone-state.json"
     assert f'"id": "{writes[0]["command_id"]}"' in str(writes[0]["command"])
     assert '"record_microphone": true' in str(writes[0]["command"])
+
+
+def test_set_echo_cancellation_enabled_writes_command_and_waits_for_matching_state(tmp_path: Path, monkeypatch) -> None:
+    runtime = MacOSCaptureRuntime()
+    runtime.runtime_dir = tmp_path
+    pid_file = tmp_path / "live-audio.pid"
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    writes: list[dict[str, object]] = []
+
+    def fake_wait_for_echo_cancellation_state(state_file: Path, command_id: str) -> dict[str, object]:
+        command = (tmp_path / "live-audio.echo-cancellation-command.json").read_text(encoding="utf-8")
+        writes.append({"state_file": state_file, "command_id": command_id, "command": command})
+        return {"id": command_id, "ok": True, "echo_cancellation_enabled": True}
+
+    monkeypatch.setattr(runtime, "_wait_for_echo_cancellation_state", fake_wait_for_echo_cancellation_state)
+
+    payload = runtime._send_echo_cancellation_command(pid_file, True)
+
+    assert payload == {"pid": os.getpid(), "echo_cancellation_enabled": True}
+    assert len(writes) == 1
+    assert writes[0]["state_file"] == tmp_path / "live-audio.echo-cancellation-state.json"
+    assert f'"id": "{writes[0]["command_id"]}"' in str(writes[0]["command"])
+    assert '"echo_cancellation_enabled": true' in str(writes[0]["command"])
 
 
 def test_set_target_audio_muted_writes_command_and_waits_for_matching_state(tmp_path: Path, monkeypatch) -> None:

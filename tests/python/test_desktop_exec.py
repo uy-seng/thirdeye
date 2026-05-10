@@ -32,6 +32,7 @@ def test_start_recording_forwards_controller_local_output_path(settings, monkeyp
             "target": {"id": "desktop", "kind": "desktop", "label": "Isolated desktop"},
             "mute_target_audio": False,
             "record_microphone": False,
+            "echo_cancellation_enabled": False,
         },
     }
 
@@ -62,6 +63,7 @@ def test_start_recording_forwards_muted_target_audio_request(settings, monkeypat
         "target": {"id": "application:chrome", "kind": "application", "label": "Google Chrome", "app_pid": 4242},
         "mute_target_audio": True,
         "record_microphone": False,
+        "echo_cancellation_enabled": False,
     }
 
 
@@ -93,6 +95,7 @@ def test_start_recording_forwards_microphone_request(settings, monkeypatch) -> N
         "target": {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
         "mute_target_audio": False,
         "record_microphone": True,
+        "echo_cancellation_enabled": False,
     }
 
 
@@ -122,6 +125,7 @@ def test_start_live_audio_forwards_microphone_request(settings, monkeypatch) -> 
         "target": {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
         "mute_target_audio": False,
         "record_microphone": True,
+        "echo_cancellation_enabled": False,
     }
 
 
@@ -185,6 +189,38 @@ def test_set_record_microphone_enabled_posts_runtime_microphone_request(settings
             "job_id": "job-123",
             "target": {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
             "record_microphone": True,
+        },
+    }
+
+
+def test_set_echo_cancellation_enabled_posts_runtime_echo_request(settings, monkeypatch) -> None:
+    from capture.desktop_exec import MacOSCaptureHttpClient
+
+    client = MacOSCaptureHttpClient(settings)
+    captured: dict[str, object] = {}
+
+    async def fake_post(path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
+        captured["path"] = path
+        captured["payload"] = payload or {}
+        return {"pid": 4321, "echo_cancellation_enabled": True}
+
+    monkeypatch.setattr(client, "_post", fake_post)
+
+    payload = asyncio.run(
+        client.set_echo_cancellation_enabled(
+            "job-123",
+            {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
+            True,
+        )
+    )
+
+    assert payload == {"pid": 4321, "echo_cancellation_enabled": True}
+    assert captured == {
+        "path": "/echo-cancellation",
+        "payload": {
+            "job_id": "job-123",
+            "target": {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
+            "echo_cancellation_enabled": True,
         },
     }
 

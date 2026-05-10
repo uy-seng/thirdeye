@@ -32,6 +32,14 @@ export function openScreenRecordingSettings() {
   return invoke("open_screen_recording_settings");
 }
 
+export function requestMicrophoneAccess() {
+  return invoke<boolean>("request_microphone_access");
+}
+
+export function openMicrophoneSettings() {
+  return invoke("open_microphone_settings");
+}
+
 export function startSilenceNotificationMonitor(payload: SilenceNotificationMonitorPayload) {
   return invoke("start_silence_notification_monitor", { payload });
 }

@@ -110,6 +110,7 @@ class FakeCaptureClient:
         self._output_file: Path | None = None
         self._target_audio_muted = False
         self._record_microphone = False
+        self._echo_cancellation_enabled = False
 
     async def health(self) -> dict[str, Any]:
         return {"status": "ok", "provider": "test-double"}
@@ -132,14 +133,17 @@ class FakeCaptureClient:
         target: dict[str, Any],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
     ) -> dict[str, Any]:
         self._running_recording = True
         self._target_audio_muted = mute_target_audio
         self._record_microphone = record_microphone
+        self._echo_cancellation_enabled = echo_cancellation_enabled
         self._output_file = Path(output_file)
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
         suffix = ":muted" if mute_target_audio else ""
         suffix += ":microphone" if record_microphone else ""
+        suffix += ":echo-cancelled" if echo_cancellation_enabled else ""
         self._output_file.write_bytes(f"test-mp4:{self.backend_name}:{target['id']}{suffix}".encode("utf-8"))
         return {"pid": self._recording_pid, "output_file": output_file}
 
@@ -155,10 +159,12 @@ class FakeCaptureClient:
         target: dict[str, Any],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
     ) -> dict[str, Any]:
         self._running_live_audio = True
         self._target_audio_muted = mute_target_audio
         self._record_microphone = record_microphone
+        self._echo_cancellation_enabled = echo_cancellation_enabled
         return {"pid": self._live_audio_pid, "fifo_path": str(self.settings.recordings_root / "jobs" / job_id / "live_audio.pcm")}
 
     async def set_target_audio_muted(
@@ -178,6 +184,18 @@ class FakeCaptureClient:
     ) -> dict[str, Any]:
         self._record_microphone = record_microphone
         return {"pid": self._recording_pid if self._running_recording else self._live_audio_pid, "record_microphone": record_microphone}
+
+    async def set_echo_cancellation_enabled(
+        self,
+        job_id: str,
+        target: dict[str, Any],
+        echo_cancellation_enabled: bool,
+    ) -> dict[str, Any]:
+        self._echo_cancellation_enabled = echo_cancellation_enabled
+        return {
+            "pid": self._recording_pid if self._running_recording else self._live_audio_pid,
+            "echo_cancellation_enabled": echo_cancellation_enabled,
+        }
 
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         self._running_live_audio = False
@@ -239,8 +257,16 @@ class FakeDesktopPoolClient:
         target: dict[str, Any],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
     ) -> dict[str, Any]:
-        return await self._client_for_target(target).start_recording(job_id, output_file, target, mute_target_audio, record_microphone)
+        return await self._client_for_target(target).start_recording(
+            job_id,
+            output_file,
+            target,
+            mute_target_audio,
+            record_microphone,
+            echo_cancellation_enabled,
+        )
 
     async def stop_recording(self, job_id: str, output_file: str, target: dict[str, Any]) -> dict[str, Any]:
         return await self._client_for_target(target).stop_recording(job_id, output_file, target)
@@ -251,8 +277,15 @@ class FakeDesktopPoolClient:
         target: dict[str, Any],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
+        echo_cancellation_enabled: bool = False,
     ) -> dict[str, Any]:
-        return await self._client_for_target(target).start_live_audio(job_id, target, mute_target_audio, record_microphone)
+        return await self._client_for_target(target).start_live_audio(
+            job_id,
+            target,
+            mute_target_audio,
+            record_microphone,
+            echo_cancellation_enabled,
+        )
 
     async def set_target_audio_muted(
         self,
@@ -269,6 +302,14 @@ class FakeDesktopPoolClient:
         record_microphone: bool,
     ) -> dict[str, Any]:
         return await self._client_for_target(target).set_record_microphone_enabled(job_id, target, record_microphone)
+
+    async def set_echo_cancellation_enabled(
+        self,
+        job_id: str,
+        target: dict[str, Any],
+        echo_cancellation_enabled: bool,
+    ) -> dict[str, Any]:
+        return await self._client_for_target(target).set_echo_cancellation_enabled(job_id, target, echo_cancellation_enabled)
 
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         return await self._client_for_target(target).stop_live_audio(job_id, target)

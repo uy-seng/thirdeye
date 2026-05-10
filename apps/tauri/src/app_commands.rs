@@ -5,12 +5,97 @@ use std::process::Command;
 
 const SCREEN_RECORDING_SETTINGS_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+const MICROPHONE_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
+
+#[cfg(target_os = "macos")]
+mod macos_microphone {
+    use block2::RcBlock;
+    use objc2::runtime::{AnyObject, Bool};
+    use objc2::{class, msg_send};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    const AUTHORIZATION_NOT_DETERMINED: isize = 0;
+    const AUTHORIZATION_RESTRICTED: isize = 1;
+    const AUTHORIZATION_DENIED: isize = 2;
+    const AUTHORIZATION_AUTHORIZED: isize = 3;
+
+    #[link(name = "AVFoundation", kind = "framework")]
+    extern "C" {
+        #[link_name = "AVMediaTypeAudio"]
+        static AV_MEDIA_TYPE_AUDIO: *const AnyObject;
+    }
+
+    pub(super) fn request_access() -> Result<bool, String> {
+        let media_type = unsafe { AV_MEDIA_TYPE_AUDIO };
+        if media_type.is_null() {
+            return Err("Microphone access is not available on this Mac.".to_string());
+        }
+
+        let status: isize = unsafe {
+            msg_send![
+                class!(AVCaptureDevice),
+                authorizationStatusForMediaType: media_type
+            ]
+        };
+        match status {
+            AUTHORIZATION_AUTHORIZED => Ok(true),
+            AUTHORIZATION_DENIED | AUTHORIZATION_RESTRICTED => Ok(false),
+            AUTHORIZATION_NOT_DETERMINED => request_access_prompt(media_type),
+            _ => Ok(false),
+        }
+    }
+
+    fn request_access_prompt(media_type: *const AnyObject) -> Result<bool, String> {
+        let (sender, receiver) = mpsc::channel();
+        let completion = RcBlock::new(move |granted: Bool| {
+            let _ = sender.send(granted.as_bool());
+        });
+
+        let _: () = unsafe {
+            msg_send![
+                class!(AVCaptureDevice),
+                requestAccessForMediaType: media_type,
+                completionHandler: &*completion
+            ]
+        };
+
+        receiver
+            .recv_timeout(Duration::from_secs(120))
+            .map_err(|_| "Timed out waiting for microphone access.".to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod macos_microphone {
+    pub(super) fn request_access() -> Result<bool, String> {
+        Ok(true)
+    }
+}
+
 #[tauri::command]
 pub(crate) fn open_screen_recording_settings() -> Result<(), String> {
     Command::new("open")
         .arg(SCREEN_RECORDING_SETTINGS_URL)
         .status()
         .map_err(|error| format!("Unable to open capture settings: {error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn request_microphone_access() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(macos_microphone::request_access)
+        .await
+        .map_err(|error| format!("Unable to request microphone access: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) fn open_microphone_settings() -> Result<(), String> {
+    Command::new("open")
+        .arg(MICROPHONE_SETTINGS_URL)
+        .status()
+        .map_err(|error| format!("Unable to open microphone settings: {error}"))?;
     Ok(())
 }
 

@@ -2,6 +2,7 @@ COMPOSE ?= docker compose
 COMPOSE_FILE ?= infra/compose.yaml
 RUNTIME_ROOT ?= $(CURDIR)/runtime
 MACOS_APP_DIR ?= apps
+MACOS_APP_DMG_DIR ?= $(MACOS_APP_DIR)/tauri/target/release/bundle/dmg
 MACOS_CAPTURE_LABEL ?= com.thirdeye.macos-capture-agent
 MACOS_CAPTURE_HOST ?= 127.0.0.1
 MACOS_CAPTURE_PORT ?= 8791
@@ -106,7 +107,14 @@ macos-app-dev:
 	cd $(MACOS_APP_DIR) && THIRDEYE_REPO_ROOT="$(CURDIR)" THIRDEYE_RUNTIME_ROOT="$(RUNTIME_ROOT)" npm run dev
 
 macos-app-build:
-	cd $(MACOS_APP_DIR) && THIRDEYE_REPO_ROOT="$(CURDIR)" npm run build
+	cd $(MACOS_APP_DIR) && THIRDEYE_REPO_ROOT="$(CURDIR)" CI=true npm run build -- --bundles dmg
+	@dmg_path="$$(find "$(MACOS_APP_DMG_DIR)" -maxdepth 1 -type f -name '*.dmg' -print | sort | tail -n 1)"; \
+		if [ -z "$$dmg_path" ]; then \
+			printf 'No DMG was produced in %s\n' "$(MACOS_APP_DMG_DIR)" >&2; \
+			exit 1; \
+		fi; \
+		printf 'Opening %s\n' "$$dmg_path"; \
+		open "$$dmg_path"
 
 macos-app-test:
 	cd $(MACOS_APP_DIR)/tauri && cargo test

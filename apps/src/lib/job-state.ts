@@ -73,6 +73,13 @@ export function recordMicrophoneEnabled(job: {
   return Boolean(preferences && preferences.record_microphone === true);
 }
 
+export function echoCancellationEnabled(job: {
+  metadata_json?: JobMetadataJson;
+}) {
+  const preferences = job.metadata_json?.session_preferences;
+  return Boolean(preferences && preferences.echo_cancellation_enabled === true);
+}
+
 export function canToggleTargetAudioMute(job: {
   state: string;
   capture_backend: string;
@@ -90,6 +97,14 @@ export function canToggleMicrophoneRecording(job: {
   capture_backend: string;
 }) {
   return job.capture_backend === "macos_local" && MICROPHONE_TOGGLE_STATES.has(job.state);
+}
+
+export function canToggleEchoCancellation(job: {
+  state: string;
+  capture_backend: string;
+  metadata_json?: JobMetadataJson;
+}) {
+  return job.capture_backend === "macos_local" && MICROPHONE_TOGGLE_STATES.has(job.state) && recordMicrophoneEnabled(job);
 }
 
 export function readableState(value: string) {

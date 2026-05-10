@@ -65,6 +65,18 @@ class CaptureMicrophoneStateError(CaptureMicrophoneError):
     pass
 
 
+class CaptureEchoCancellationError(RuntimeError):
+    pass
+
+
+class CaptureEchoCancellationUnsupportedError(CaptureEchoCancellationError):
+    pass
+
+
+class CaptureEchoCancellationStateError(CaptureEchoCancellationError):
+    pass
+
+
 @dataclass
 class JobRepository:
     session_factory: sessionmaker
@@ -114,6 +126,7 @@ class JobRepository:
                         "session_preferences": {
                             "record_screen": payload.record_screen,
                             "record_microphone": payload.record_microphone,
+                            "echo_cancellation_enabled": payload.echo_cancellation_enabled,
                             "generate_summary": payload.generate_summary,
                             "mute_target_audio": payload.mute_target_audio,
                             "notify_on_inactivity": payload.notify_on_inactivity,
@@ -351,6 +364,9 @@ class CaptureRuntime:
     def _record_microphone_enabled(self, job: JobResponse) -> bool:
         return self._session_preference(job, "record_microphone", False)
 
+    def _echo_cancellation_enabled(self, job: JobResponse) -> bool:
+        return self._session_preference(job, "echo_cancellation_enabled", False)
+
     def _summary_enabled(self, job: JobResponse) -> bool:
         return self._session_preference(job, "generate_summary", True)
 
@@ -415,6 +431,7 @@ class CaptureRuntime:
         recording_stage_path = self.artifacts.recording_stage_path(job.id).as_posix()
         record_screen = self._record_screen_enabled(job)
         record_microphone = self._record_microphone_enabled(job)
+        echo_cancellation_enabled = self._echo_cancellation_enabled(job)
         mute_target_audio = self._mute_target_audio_enabled(job)
         self.jobs.transition_job(job.id, JobState.PENDING_START, "capture requested")
         recording_started = False
@@ -427,6 +444,7 @@ class CaptureRuntime:
                     job.capture_target,
                     mute_target_audio,
                     record_microphone,
+                    echo_cancellation_enabled,
                 )
                 recording_started = True
                 job = self.jobs.update_runtime_fields(
@@ -436,7 +454,13 @@ class CaptureRuntime:
                 )
                 self.jobs.transition_job(job.id, JobState.RECORDING, "recording started")
 
-            live_audio_response = await backend.start_live_audio(job.id, job.capture_target, mute_target_audio, record_microphone)
+            live_audio_response = await backend.start_live_audio(
+                job.id,
+                job.capture_target,
+                mute_target_audio,
+                record_microphone,
+                echo_cancellation_enabled,
+            )
             live_audio_started = True
             job = self.jobs.update_runtime_fields(job.id, live_audio_pid=live_audio_response.get("pid"))
             self.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "live audio started")
@@ -553,7 +577,7 @@ class CaptureRuntime:
             )
         return updated
 
-    async def set_record_microphone_enabled(self, job_id: str, record_microphone: bool) -> JobResponse:
+    async def set_record_microphone_enabled(self, job_id: str, record_microphone: bool, echo_cancellation_enabled: bool | None = None) -> JobResponse:
         job = self.jobs.get_job(job_id)
         if job.capture_backend != "macos_local":
             raise CaptureMicrophoneUnsupportedError("runtime microphone recording is only available for This Mac capture")
@@ -561,16 +585,20 @@ class CaptureRuntime:
             raise CaptureMicrophoneStateError("capture must be recording before changing microphone")
         if record_microphone and self._mute_target_audio_enabled(job):
             raise CaptureMicrophoneUnsupportedError("turn off muted app audio before recording microphone")
-        if self._record_microphone_enabled(job) == record_microphone:
+        requested_echo_cancellation = False if not record_microphone else (True if echo_cancellation_enabled is None else echo_cancellation_enabled)
+        if self._record_microphone_enabled(job) == record_microphone and self._echo_cancellation_enabled(job) == requested_echo_cancellation:
             return job
 
         backend = self._backend_for_job(job)
         try:
             await backend.set_record_microphone_enabled(job.id, job.capture_target, record_microphone)
+            if self._echo_cancellation_enabled(job) != requested_echo_cancellation:
+                await backend.set_echo_cancellation_enabled(job.id, job.capture_target, requested_echo_cancellation)
         except Exception as exc:
             raise CaptureMicrophoneError(self._failure_message(exc)) from exc
 
         updated = self._update_session_preference(job, "record_microphone", record_microphone)
+        updated = self._update_session_preference(updated, "echo_cancellation_enabled", requested_echo_cancellation)
         if record_microphone:
             if not self.relay_manager.is_running(job_id, source="microphone"):
                 await self._start_deepgram_relay(updated, backend, "microphone")
@@ -579,7 +607,37 @@ class CaptureRuntime:
         with contextlib.suppress(Exception):
             await self.transcript_hub.publish(
                 job.id,
-                {"type": "status", "state": updated.state, "record_microphone": record_microphone},
+                {
+                    "type": "status",
+                    "state": updated.state,
+                    "record_microphone": record_microphone,
+                    "echo_cancellation_enabled": requested_echo_cancellation,
+                },
+            )
+        return updated
+
+    async def set_echo_cancellation_enabled(self, job_id: str, echo_cancellation_enabled: bool) -> JobResponse:
+        job = self.jobs.get_job(job_id)
+        if job.capture_backend != "macos_local":
+            raise CaptureEchoCancellationUnsupportedError("echo cancellation is only available for This Mac capture")
+        if job.state not in {JobState.RECORDING.value, JobState.LIVE_STREAMING.value}:
+            raise CaptureEchoCancellationStateError("capture must be recording before changing echo cancellation")
+        if echo_cancellation_enabled and not self._record_microphone_enabled(job):
+            raise CaptureEchoCancellationUnsupportedError("turn on microphone recording before enabling echo cancellation")
+        if self._echo_cancellation_enabled(job) == echo_cancellation_enabled:
+            return job
+
+        backend = self._backend_for_job(job)
+        try:
+            await backend.set_echo_cancellation_enabled(job.id, job.capture_target, echo_cancellation_enabled)
+        except Exception as exc:
+            raise CaptureEchoCancellationError(self._failure_message(exc)) from exc
+
+        updated = self._update_session_preference(job, "echo_cancellation_enabled", echo_cancellation_enabled)
+        with contextlib.suppress(Exception):
+            await self.transcript_hub.publish(
+                job.id,
+                {"type": "status", "state": updated.state, "echo_cancellation_enabled": echo_cancellation_enabled},
             )
         return updated
 

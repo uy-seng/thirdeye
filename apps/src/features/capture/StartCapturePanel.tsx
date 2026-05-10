@@ -21,6 +21,7 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
   const [targetId, setTargetId] = useState("");
   const [screenRecord, setScreenRecord] = useState(true);
   const [recordMicrophone, setRecordMicrophone] = useState(false);
+  const [echoCancellation, setEchoCancellation] = useState(true);
   const [muteTargetAudio, setMuteTargetAudio] = useState(false);
   const [generateSummary, setGenerateSummary] = useState(true);
   const [notifyOnInactivity, setNotifyOnInactivity] = useState(true);
@@ -64,6 +65,7 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
   useEffect(() => {
     if (!canRecordMicrophone) {
       setRecordMicrophone(false);
+      setEchoCancellation(true);
     }
   }, [canRecordMicrophone]);
 
@@ -95,6 +97,7 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
           capture_target: selectedTarget,
           record_screen: screenRecord,
           record_microphone: canRecordMicrophone ? recordMicrophone : false,
+          echo_cancellation_enabled: canRecordMicrophone && recordMicrophone ? echoCancellation : false,
           generate_summary: generateSummary,
           mute_target_audio: canMuteTargetAudio && !recordMicrophone ? muteTargetAudio : false,
           notify_on_inactivity: notifyOnInactivity,
@@ -166,6 +169,15 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
               <span>
                 <strong>Record microphone</strong>
                 <small>Use your microphone without changing other apps.</small>
+              </span>
+            </label>
+          ) : null}
+          {canRecordMicrophone && recordMicrophone ? (
+            <label className="option-row">
+              <input checked={echoCancellation} onChange={(event) => setEchoCancellation(event.target.checked)} type="checkbox" />
+              <span>
+                <strong>Reduce speaker echo</strong>
+                <small>Keeps session audio playing while cleaning your microphone.</small>
               </span>
             </label>
           ) : null}
