@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import parse_qs, urlparse
 
 from transcripts.deepgram_client import normalize_deepgram_message
@@ -55,6 +56,34 @@ def test_websocket_url_can_accept_browser_voice_note_pcm(tmp_path) -> None:
     assert query["sample_rate"] == ["16000"]
     assert query["channels"] == ["1"]
     assert "language" not in query
+
+
+def test_connect_rejects_missing_deepgram_api_key(tmp_path) -> None:
+    settings = Settings(
+        controller_db_path=tmp_path / "controller.db",
+        artifacts_root=tmp_path / "artifacts",
+        recordings_root=tmp_path / "recordings",
+        deepgram_api_key="replace-me",
+    )
+
+    from transcripts.deepgram_client import DeepgramClient
+
+    async def connect() -> None:
+        await DeepgramClient(settings).connect(
+            model="nova-3",
+            language=None,
+            diarize=True,
+            smart_format=True,
+            interim_results=True,
+            vad_events=True,
+        )
+
+    try:
+        asyncio.run(connect())
+    except RuntimeError as exc:
+        assert str(exc) == "Deepgram API key is missing. Add DEEPGRAM_API_KEY to .env."
+        return
+    raise AssertionError("expected missing Deepgram API key failure")
 
 
 def test_results_event_becomes_interim_message() -> None:

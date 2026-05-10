@@ -88,6 +88,10 @@ def supervisor_pid_file(runtime_root: Path, name: str) -> Path:
     return runtime_root / "supervisor" / f"{name}.pid"
 
 
+def supervisor_metadata_file(runtime_root: Path, name: str) -> Path:
+    return runtime_root / "supervisor" / f"{name}.json"
+
+
 def supervised_service_pid(runtime_root: Path, name: str) -> int | None:
     pid_file = supervisor_pid_file(runtime_root, name)
     if not pid_file.exists():
@@ -96,6 +100,17 @@ def supervised_service_pid(runtime_root: Path, name: str) -> int | None:
         return int(pid_file.read_text(encoding="utf-8").strip())
     except ValueError:
         return None
+
+
+def service_matches_repo(runtime_root: Path, name: str, repo_root: Path) -> bool:
+    metadata_path = supervisor_metadata_file(runtime_root, name)
+    if not metadata_path.exists():
+        return False
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return payload.get("repo_root") == str(repo_root.resolve())
 
 
 def stop_supervised_service(runtime_root: Path, name: str) -> None:
@@ -107,6 +122,7 @@ def stop_supervised_service(runtime_root: Path, name: str) -> None:
         except ProcessLookupError:
             pass
     pid_file.unlink(missing_ok=True)
+    supervisor_metadata_file(runtime_root, name).unlink(missing_ok=True)
 
 
 def wait_for_port_closed(port: int, timeout_seconds: float = 3.0) -> None:
@@ -195,6 +211,7 @@ def spawn_service(*, repo_root: Path, runtime_root: Path, name: str, command: st
     ensure_runtime_dirs(runtime_root)
     log_path = runtime_root / "logs" / f"{name}.log"
     pid_path = runtime_root / "supervisor" / f"{name}.pid"
+    metadata_path = supervisor_metadata_file(runtime_root, name)
     stdout = log_path.open("ab")
     stderr = stdout
     child = subprocess.Popen(
@@ -205,6 +222,10 @@ def spawn_service(*, repo_root: Path, runtime_root: Path, name: str, command: st
         start_new_session=True,
     )
     pid_path.write_text(str(child.pid), encoding="utf-8")
+    metadata_path.write_text(
+        json.dumps({"repo_root": str(repo_root.resolve())}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def ensure_macos_capture_helper(repo_root: Path) -> Path:
@@ -264,6 +285,14 @@ def start_services(*, repo_root: Path | None = None, runtime_root: Path | None =
     if (
         is_port_open(MACOS_CAPTURE_PORT)
         and supervised_service_pid(selected_runtime_root, "macos-capture-agent") is not None
+        and not service_matches_repo(selected_runtime_root, "macos-capture-agent", selected_repo_root)
+    ):
+        stop_supervised_service(selected_runtime_root, "macos-capture-agent")
+        wait_for_port_closed(MACOS_CAPTURE_PORT)
+
+    if (
+        is_port_open(MACOS_CAPTURE_PORT)
+        and supervised_service_pid(selected_runtime_root, "macos-capture-agent") is not None
         and macos_capture_permission_denied()
     ):
         stop_supervised_service(selected_runtime_root, "macos-capture-agent")
@@ -277,6 +306,14 @@ def start_services(*, repo_root: Path | None = None, runtime_root: Path | None =
             command=macos_capture_command(selected_runtime_root, helper_bin, selected_repo_root),
         )
         wait_for_port_open(MACOS_CAPTURE_PORT, "macos-capture-agent")
+
+    if (
+        is_port_open(CONTROLLER_API_PORT)
+        and supervised_service_pid(selected_runtime_root, "controller-api") is not None
+        and not service_matches_repo(selected_runtime_root, "controller-api", selected_repo_root)
+    ):
+        stop_supervised_service(selected_runtime_root, "controller-api")
+        wait_for_port_closed(CONTROLLER_API_PORT)
 
     if is_port_open(CONTROLLER_API_PORT):
         stale_reason = None

@@ -73,7 +73,7 @@ Install these on the host machine before starting setup:
 | Node.js 20.19+ | Runs the Tauri frontend tooling | `.nvmrc` pins the source-built app version |
 | npm | Installs frontend dependencies | Ships with Node.js |
 | Rust toolchain | Builds the macOS app shell | Required for `make macos-app-dev` and `make macos-app-build` |
-| Xcode command line tools | Builds Swift and macOS app components | Required for ScreenCaptureKit helper builds |
+| Xcode command line tools | Builds Swift and macOS app components | Required for ScreenCaptureKit helper builds, including app dev/build targets |
 | Localhost ports | Exposes the local services | `8788`, `8791`, optional on-demand desktop ports, and `18789` |
 
 ## Requirements
@@ -118,11 +118,10 @@ make setup
 make doctor
 ```
 
-After setup, any manual Python command should either run through `make` or use the virtual environment directly:
+After setup, switch to virtual environment:
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests/python -q
 ```
 
 ### 2. Review and edit `.env`
@@ -135,33 +134,16 @@ Important environment variables from `.env.example`:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `MACOS_CAPTURE_BASE_URL` | Optional | Base URL for the host-local macOS capture agent |
-| `DEEPGRAM_API_KEY` | Yes for real transcription | Deepgram live transcription auth |
-| `OPENCLAW_BASE_URL` | Optional | Base URL for the helper gateway |
-| `OPENCLAW_SUMMARY_MODEL` | Optional | Summary model used via OpenClaw |
+| `MACOS_CAPTURE_BASE_URL` | Required | Base URL for the host-local macOS capture agent |
+| `DEEPGRAM_API_KEY` | Required | Deepgram live transcription auth |
+| `OPENCLAW_BASE_URL` | Required | Base URL for the helper gateway |
+| `OPENCLAW_SUMMARY_MODEL` | Required | Summary model used via OpenClaw |
 | `RECORDING_FPS`, `RECORDING_WIDTH`, `RECORDING_HEIGHT` | Optional | Desktop recording defaults |
 | `SILENCE_TIMEOUT_MINUTES` | Optional | Native inactivity alert timeout |
 
-### 3. Manual virtual environment setup
-
-`make setup` does this for you. If multiple Python versions are installed and you want to create `.venv` yourself, use your Python 3.12+ executable explicitly, then run `make setup` afterward to finish the rest of the app setup.
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-make setup
-```
-
-The root `requirements.txt` installs:
-
-- controller backend dependencies from `services/controller-api/requirements.txt`
-- `pytest` for the Python test suite
-
 ### 4. Build the macOS capture helper
 
-If you want to capture a local app, window, or display on this Mac, build the ScreenCaptureKit helper once:
+The macOS app targets build the ScreenCaptureKit helper automatically. To build the helper by itself for command-line capture agent use, run:
 
 ```bash
 make macos-capture-build
@@ -179,11 +161,15 @@ Run the source-built macOS app:
 make macos-app-dev
 ```
 
+This builds the macOS capture helper before launching the app.
+
 Build the macOS app bundle:
 
 ```bash
 make macos-app-build
 ```
+
+This builds the macOS capture helper before creating the app bundle and DMG.
 
 The app bundle and DMG are created by Tauri under `apps/tauri/target/release/bundle/`.
 
@@ -194,79 +180,6 @@ Runtime data created by the app is stored under:
 ```
 
 Use the app's capture settings button when macOS blocks local screen, app, window, or muted app-audio capture. The packaged app bundles the ScreenCaptureKit helper inside `thirdeye.app`, so the normal permission entry to allow is `thirdeye` in Screen & System Audio Recording. The first app build uses ad-hoc signing for local use; Developer ID signing and notarization are separate distribution steps.
-
-## Advanced Startup
-
-The controller is local-first. The app-managed macOS flow does not require Docker or manually starting the API services. Only the optional isolated desktop and optional OpenClaw gateway run in Docker.
-
-Use this section when you want to run individual services from the terminal instead of letting `thirdeye.app` manage them.
-
-### 1. Optional: build the Docker image
-
-```bash
-make build
-```
-
-### 2. Optional: use isolated desktops
-
-You do not need to pre-start an isolated desktop. Start the app and click `Create isolated desktop` in the capture workspace. The controller starts a Docker desktop only when you ask for one, assigns loopback-only ports, and lets you destroy it when you are done.
-
-### 3. Start the optional OpenClaw helper
-
-If you want summaries:
-
-```bash
-make up-openclaw
-```
-
-Notes:
-
-- This command reads the token from `~/.openclaw/openclaw.json`.
-- The helper listens on `127.0.0.1:18789`.
-- If you only want to verify the token source or print a fresh dashboard URL, run:
-
-```bash
-make openclaw-sync
-```
-
-### 4. Start the local API
-
-In a new terminal:
-
-```bash
-source .venv/bin/activate
-make dev-api
-```
-
-`make dev-api`:
-
-- loads `.env` when present
-- creates missing runtime directories
-- starts FastAPI on `127.0.0.1:8788`
-- points the API at `runtime/controller/controller.db`
-- writes artifacts under `runtime/artifacts`
-- shares recordings from `runtime/recordings`
-
-### 5. Optional: start the macOS capture agent
-
-If you want `This Mac` to appear in the start-capture form:
-
-```bash
-make macos-capture-up
-```
-
-This builds the ScreenCaptureKit helper if needed and starts `macos-capture-agent` as a background user service on `127.0.0.1:8791`.
-
-Useful commands:
-
-```bash
-make macos-capture-status
-make macos-capture-logs
-make macos-capture-permissions
-make macos-capture-down
-```
-
-On first use through `thirdeye.app`, macOS may ask for Screen & System Audio Recording permission. Grant it to `thirdeye`, quit and reopen the app if macOS asks, then refresh the target list in the controller UI. If you start the capture agent directly from Terminal with `make macos-capture-up`, macOS can still attribute permission to the Terminal/Python launch path.
 
 ## Access URLs
 
@@ -345,10 +258,10 @@ Optional:
 make up-openclaw
 ```
 
-To stop the Docker services:
+To stop the optional OpenClaw helper:
 
 ```bash
-make down
+docker compose --project-name thirdeye -f infra/compose.yaml --profile openclaw down
 ```
 
 ## Testing

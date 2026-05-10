@@ -88,6 +88,24 @@ def test_macos_app_restarts_capture_agent_when_helper_health_is_missing() -> Non
     assert "stop_macos_capture_listener" in source
 
 
+def test_macos_app_tracks_supervised_service_repo_root() -> None:
+    source = (ROOT / "apps" / "tauri" / "src" / "local_services.rs").read_text(encoding="utf-8")
+
+    assert "ServiceLaunchMetadata" in source
+    assert "write_service_launch_metadata(runtime_root, name, repo_root)" in source
+    assert "fn supervised_service_matches_repo(" in source
+    assert "&& !supervised_service_matches_repo(" in source
+    assert "supervisor_metadata_file(runtime_root, name)" in source
+
+
+def test_macos_app_reclaims_unowned_runtime_listeners() -> None:
+    source = (ROOT / "apps" / "tauri" / "src" / "local_services.rs").read_text(encoding="utf-8")
+
+    assert "let unowned_listener = port_open && !supervised;" in source
+    assert "if repo_mismatch || unowned_listener" in source
+    assert "permission_denied || helper_missing || pid_file.exists() || unowned_listener" in source
+
+
 def test_macos_capture_helper_excludes_thirdeye_ui_from_display_captures() -> None:
     helper = (ROOT / "services" / "macos-capture-agent" / "helper" / "ScreenCaptureKitHelper.swift").read_text(encoding="utf-8")
 

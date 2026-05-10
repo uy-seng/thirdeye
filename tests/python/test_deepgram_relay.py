@@ -119,3 +119,49 @@ def test_relay_manager_stop_cancels_stalled_source_stream(settings) -> None:
         return relay.is_running("job-123", source="system")
 
     assert asyncio.run(run()) is False
+
+
+def test_relay_manager_raises_when_deepgram_connection_is_rejected(settings) -> None:
+    degraded: list[tuple[str, str]] = []
+
+    async def on_event(job_id: str, event: dict[str, Any]) -> None:
+        raise AssertionError(event)
+
+    async def on_degraded(job_id: str, message: str) -> None:
+        degraded.append((job_id, message))
+
+    class RejectedDeepgramClient:
+        async def connect(self, **kwargs):
+            raise RuntimeError("server rejected WebSocket connection: HTTP 401")
+
+    async def audio_stream():
+        yield b"\x00\x01"
+
+    async def run() -> None:
+        relay = RelayManager(
+            settings=settings,
+            deepgram_client=RejectedDeepgramClient(),  # type: ignore[arg-type]
+            on_event=on_event,
+            on_degraded=on_degraded,
+        )
+        try:
+            await relay.start(
+                "job-123",
+                audio_stream,
+                {
+                    "model": "nova-3",
+                    "language": None,
+                    "diarize": True,
+                    "smart_format": True,
+                    "interim_results": True,
+                },
+                source="system",
+            )
+        except RuntimeError as exc:
+            assert "Deepgram rejected the API key" in str(exc)
+            return
+        raise AssertionError("expected Deepgram startup failure")
+
+    asyncio.run(run())
+
+    assert degraded == [("job-123", "Deepgram rejected the API key. Check DEEPGRAM_API_KEY in .env.")]

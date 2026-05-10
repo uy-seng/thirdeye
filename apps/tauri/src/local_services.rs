@@ -43,6 +43,11 @@ pub(crate) struct ServiceStatus {
     reports: Vec<ServiceReport>,
 }
 
+#[derive(Deserialize, Serialize)]
+struct ServiceLaunchMetadata {
+    repo_root: String,
+}
+
 #[derive(Default)]
 pub(crate) struct AppServiceManager {
     children: Mutex<AppServiceChildren>,
@@ -89,14 +94,16 @@ pub(crate) fn stop_services(
         .lock()
         .map_err(|_| "Unable to lock local service manager.".to_string())?;
 
-    stop_child_service(
+    stop_runtime_service(
         &runtime_root,
         "macos-capture-agent",
+        MACOS_CAPTURE_PORT,
         &mut children.macos_capture_agent,
     )?;
-    stop_child_service(
+    stop_runtime_service(
         &runtime_root,
         "controller-api",
+        CONTROLLER_API_PORT,
         &mut children.controller_api,
     )?;
 
@@ -123,10 +130,23 @@ fn reconcile_macos_capture_agent(
     let active_capture = port_open && macos_capture_has_active_capture();
     let permission_denied = port_open && macos_capture_permission_denied();
     let helper_missing = port_open && macos_capture_helper_is_missing();
+    let supervised =
+        child_running || supervisor_pid_file(runtime_root, "macos-capture-agent").exists();
+    let unowned_listener = port_open && !supervised;
+    let repo_mismatch = port_open
+        && supervised
+        && !supervised_service_matches_repo(runtime_root, "macos-capture-agent", repo_root);
 
-    if !child_running && port_open && !active_capture {
+    if repo_mismatch && !active_capture {
+        stop_child_service(
+            runtime_root,
+            "macos-capture-agent",
+            &mut children.macos_capture_agent,
+        )?;
+        wait_for_port_closed(MACOS_CAPTURE_PORT, Duration::from_secs(3));
+    } else if !child_running && port_open && !active_capture {
         let pid_file = supervisor_pid_file(runtime_root, "macos-capture-agent");
-        if permission_denied || helper_missing || pid_file.exists() {
+        if permission_denied || helper_missing || pid_file.exists() || unowned_listener {
             stop_macos_capture_listener(runtime_root)?;
         }
     }
@@ -157,6 +177,11 @@ fn reconcile_controller_api(
 ) -> Result<(), String> {
     let child_running = child_is_running(&mut children.controller_api)?;
     let port_open = is_port_open(CONTROLLER_API_PORT);
+    let supervised = child_running || supervisor_pid_file(runtime_root, "controller-api").exists();
+    let unowned_listener = port_open && !supervised;
+    let repo_mismatch = port_open
+        && supervised
+        && !supervised_service_matches_repo(runtime_root, "controller-api", repo_root);
 
     let stale_reason = if port_open && !controller_api_supports_desktops() {
         Some("does not support isolated desktops")
@@ -166,7 +191,15 @@ fn reconcile_controller_api(
         None
     };
 
-    if let Some(reason) = stale_reason {
+    if repo_mismatch || unowned_listener {
+        stop_runtime_service(
+            runtime_root,
+            "controller-api",
+            CONTROLLER_API_PORT,
+            &mut children.controller_api,
+        )?;
+        wait_for_port_closed(CONTROLLER_API_PORT, Duration::from_secs(3));
+    } else if let Some(reason) = stale_reason {
         if child_running || supervisor_pid_file(runtime_root, "controller-api").exists() {
             stop_child_service(runtime_root, "controller-api", &mut children.controller_api)?;
             wait_for_port_closed(CONTROLLER_API_PORT, Duration::from_secs(3));
@@ -230,6 +263,7 @@ fn spawn_app_service(
         child.id().to_string(),
     )
     .map_err(|error| format!("Unable to write {name} pid file: {error}"))?;
+    write_service_launch_metadata(runtime_root, name, repo_root)?;
     *slot = Some(child);
     Ok(())
 }
@@ -261,6 +295,16 @@ fn stop_child_service(
         }
     }
     stop_supervised_service(runtime_root, name)
+}
+
+fn stop_runtime_service(
+    runtime_root: &Path,
+    name: &str,
+    port: u16,
+    slot: &mut Option<Child>,
+) -> Result<(), String> {
+    stop_child_service(runtime_root, name, slot)?;
+    stop_listener_on_port(port, name)
 }
 
 fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
@@ -298,29 +342,84 @@ fn stop_supervised_service(runtime_root: &Path, name: &str) -> Result<(), String
         fs::remove_file(&pid_file)
             .map_err(|error| format!("Unable to remove {name} pid file: {error}"))?;
     }
+    let metadata_file = supervisor_metadata_file(runtime_root, name);
+    if metadata_file.exists() {
+        fs::remove_file(&metadata_file)
+            .map_err(|error| format!("Unable to remove {name} metadata file: {error}"))?;
+    }
     Ok(())
 }
 
 fn stop_macos_capture_listener(runtime_root: &Path) -> Result<(), String> {
     stop_supervised_service(runtime_root, "macos-capture-agent")?;
-    if let Some(pid) = listener_pid_for_port(MACOS_CAPTURE_PORT) {
+    stop_listener_on_port(MACOS_CAPTURE_PORT, "the stale Mac capture service")
+}
+
+fn stop_listener_on_port(port: u16, service_name: &str) -> Result<(), String> {
+    wait_for_port_closed(port, Duration::from_secs(3));
+    if !is_port_open(port) {
+        return Ok(());
+    }
+
+    if let Some(pid) = listener_pid_for_port(port) {
         terminate_process(pid, "TERM");
     }
-    wait_for_port_closed(MACOS_CAPTURE_PORT, Duration::from_secs(3));
-    if is_port_open(MACOS_CAPTURE_PORT) {
-        if let Some(pid) = listener_pid_for_port(MACOS_CAPTURE_PORT) {
+    wait_for_port_closed(port, Duration::from_secs(3));
+    if is_port_open(port) {
+        if let Some(pid) = listener_pid_for_port(port) {
             terminate_process(pid, "KILL");
         }
-        wait_for_port_closed(MACOS_CAPTURE_PORT, Duration::from_secs(1));
+        wait_for_port_closed(port, Duration::from_secs(1));
     }
-    if is_port_open(MACOS_CAPTURE_PORT) {
-        return Err("Unable to stop the stale Mac capture service on 127.0.0.1:8791.".to_string());
+    if is_port_open(port) {
+        return Err(format!(
+            "Unable to stop {service_name} on 127.0.0.1:{port}."
+        ));
     }
     Ok(())
 }
 
 fn supervisor_pid_file(runtime_root: &Path, name: &str) -> PathBuf {
     runtime_root.join("supervisor").join(format!("{name}.pid"))
+}
+
+fn supervisor_metadata_file(runtime_root: &Path, name: &str) -> PathBuf {
+    runtime_root.join("supervisor").join(format!("{name}.json"))
+}
+
+fn write_service_launch_metadata(
+    runtime_root: &Path,
+    name: &str,
+    repo_root: &Path,
+) -> Result<(), String> {
+    let metadata = ServiceLaunchMetadata {
+        repo_root: canonical_repo_root_string(repo_root),
+    };
+    let payload = serde_json::to_string(&metadata)
+        .map_err(|error| format!("Unable to serialize {name} metadata: {error}"))?;
+    fs::write(
+        supervisor_metadata_file(runtime_root, name),
+        format!("{payload}\n"),
+    )
+    .map_err(|error| format!("Unable to write {name} metadata file: {error}"))
+}
+
+fn supervised_service_matches_repo(runtime_root: &Path, name: &str, repo_root: &Path) -> bool {
+    let metadata_file = supervisor_metadata_file(runtime_root, name);
+    let Ok(payload) = fs::read_to_string(metadata_file) else {
+        return false;
+    };
+    let Ok(metadata) = serde_json::from_str::<ServiceLaunchMetadata>(&payload) else {
+        return false;
+    };
+    metadata.repo_root == canonical_repo_root_string(repo_root)
+}
+
+fn canonical_repo_root_string(repo_root: &Path) -> String {
+    fs::canonicalize(repo_root)
+        .unwrap_or_else(|_| repo_root.to_path_buf())
+        .to_string_lossy()
+        .to_string()
 }
 
 fn read_pid(path: &Path) -> Option<u32> {
@@ -561,4 +660,54 @@ fn macos_capture_command(repo_root: &Path, runtime_root: &Path, helper_bin: &Pat
         shell_escape(helper_bin),
         shell_escape(&python_bin(repo_root)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_listener_on_port_stops_unsupervised_runtime_listener() {
+        if Command::new("lsof").arg("-v").output().is_err() {
+            return;
+        }
+
+        let mut child = Command::new("python3")
+            .arg("-c")
+            .arg(
+                "import socket, time\n\
+                 sock = socket.socket()\n\
+                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n\
+                 sock.bind(('127.0.0.1', 0))\n\
+                 sock.listen(1)\n\
+                 print(sock.getsockname()[1], flush=True)\n\
+                 time.sleep(60)",
+            )
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .expect("spawn test listener");
+
+        let stdout = child.stdout.take().expect("listener stdout");
+        let mut line = String::new();
+        BufReader::new(stdout)
+            .read_line(&mut line)
+            .expect("read listener port");
+        let port = line.trim().parse::<u16>().expect("listener port");
+        assert!(is_port_open(port));
+
+        let result = stop_listener_on_port(port, "test runtime service");
+        if result.is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        result.expect("stop listener");
+        assert!(!is_port_open(port));
+    }
 }

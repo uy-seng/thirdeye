@@ -1,6 +1,5 @@
-COMPOSE ?= docker compose
-COMPOSE_FILE ?= infra/compose.yaml
 RUNTIME_ROOT ?= $(CURDIR)/runtime
+OPENCLAW_HEALTH_URL ?= http://127.0.0.1:18789/healthz
 MACOS_APP_DIR ?= apps
 MACOS_APP_DMG_DIR ?= $(MACOS_APP_DIR)/tauri/target/release/bundle/dmg
 MACOS_CAPTURE_LABEL ?= com.thirdeye.macos-capture-agent
@@ -20,7 +19,7 @@ export MACOS_CAPTURE_PLIST
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup doctor services-start services-stop services-status build up up-openclaw openclaw-sync down logs ps smoke test test-all dev-api dev-local macos-capture-build macos-capture-up macos-capture-status macos-capture-down macos-capture-logs macos-capture-permissions macos-app-install macos-app-dev macos-app-build macos-app-test
+.PHONY: help setup doctor services-start services-stop services-status openclaw-up up-openclaw openclaw-sync smoke test test-all dev-api macos-capture-build macos-capture-up macos-capture-status macos-capture-down macos-capture-logs macos-capture-permissions macos-app-dev macos-app-build macos-app-test
 
 help:
 	@printf 'Common commands:\n'
@@ -33,8 +32,8 @@ help:
 	@printf '  make macos-capture-status  Check the This Mac capture agent\n'
 	@printf '  make macos-capture-down    Stop the This Mac capture agent\n'
 	@printf '  make macos-capture-permissions  Open macOS Screen Recording settings\n'
-	@printf '  make macos-app-dev         Run thirdeye as a macOS app\n'
-	@printf '  make macos-app-build       Build thirdeye.app\n'
+	@printf '  make macos-app-dev         Build helper and run thirdeye as a macOS app\n'
+	@printf '  make macos-app-build       Build helper and thirdeye.app\n'
 
 setup:
 	PYTHONPATH="$(PYTHONPATH_DIRS)" python3 -m core.local_services setup --repo-root "$(CURDIR)" --runtime-root "$(RUNTIME_ROOT)"
@@ -51,26 +50,19 @@ services-stop:
 services-status:
 	PYTHONPATH="$(PYTHONPATH_DIRS)" .venv/bin/python -m core.local_services status --repo-root "$(CURDIR)" --runtime-root "$(RUNTIME_ROOT)"
 
-build:
-	$(COMPOSE) --env-file .env -f "$(COMPOSE_FILE)" build
-
-up:
-	THIRDEYE_RUNTIME_ROOT="$(RUNTIME_ROOT)" $(COMPOSE) --env-file .env -f "$(COMPOSE_FILE)" up -d --remove-orphans
+openclaw-up:
+	@if curl -fsS "$(OPENCLAW_HEALTH_URL)" >/dev/null 2>&1; then \
+		printf 'OpenClaw already running at %s\n' "$(OPENCLAW_HEALTH_URL)"; \
+	else \
+		printf 'OpenClaw is not running; starting helper\n'; \
+		$(MAKE) up-openclaw; \
+	fi
 
 up-openclaw:
 	./scripts/remediate_openclaw_gateway.sh --restart
 
 openclaw-sync:
 	./scripts/remediate_openclaw_gateway.sh
-
-down:
-	THIRDEYE_RUNTIME_ROOT="$(RUNTIME_ROOT)" $(COMPOSE) --env-file .env -f "$(COMPOSE_FILE)" down
-
-logs:
-	THIRDEYE_RUNTIME_ROOT="$(RUNTIME_ROOT)" $(COMPOSE) --env-file .env -f "$(COMPOSE_FILE)" logs -f --tail=200
-
-ps:
-	THIRDEYE_RUNTIME_ROOT="$(RUNTIME_ROOT)" $(COMPOSE) --env-file .env -f "$(COMPOSE_FILE)" ps
 
 smoke:
 	./scripts/smoke_test.sh
@@ -100,13 +92,10 @@ macos-capture-logs:
 macos-capture-permissions:
 	./scripts/macos_capture_agent.sh permissions
 
-macos-app-install:
-	cd $(MACOS_APP_DIR) && npm install
-
-macos-app-dev:
+macos-app-dev: macos-capture-build openclaw-up
 	cd $(MACOS_APP_DIR) && THIRDEYE_REPO_ROOT="$(CURDIR)" THIRDEYE_RUNTIME_ROOT="$(RUNTIME_ROOT)" npm run dev
 
-macos-app-build:
+macos-app-build: macos-capture-build openclaw-up
 	cd $(MACOS_APP_DIR) && THIRDEYE_REPO_ROOT="$(CURDIR)" npm run build -- --bundles dmg
 	@dmg_path="$$(find "$(MACOS_APP_DMG_DIR)" -maxdepth 1 -type f -name '*.dmg' -print | sort | tail -n 1)"; \
 		if [ -z "$$dmg_path" ]; then \
@@ -118,16 +107,6 @@ macos-app-build:
 
 macos-app-test:
 	cd $(MACOS_APP_DIR)/tauri && cargo test
-
-dev-local:
-	@printf 'Local dev startup:\n'
-	@printf '  1. make macos-capture-up      # optional, enables This Mac targets\n'
-	@printf '  2. make dev-api               # keep running in its own terminal\n'
-	@printf '\n'
-	@printf 'Useful checks:\n'
-	@printf '  make macos-capture-status\n'
-	@printf '  make macos-capture-logs\n'
-	@printf '  make macos-capture-permissions\n'
 
 dev-api:
 	mkdir -p "$(RUNTIME_ROOT)/desktop-sessions" "$(RUNTIME_ROOT)/recordings" "$(RUNTIME_ROOT)/artifacts" "$(RUNTIME_ROOT)/controller" "$(RUNTIME_ROOT)/logs"

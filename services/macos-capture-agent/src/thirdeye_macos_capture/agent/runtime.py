@@ -17,6 +17,7 @@ from capture_contracts.contracts import CaptureTarget
 
 DEFAULT_HELPER_REPO_RELATIVE_PATH = "services/macos-capture-agent/bin/macos_capture_helper"
 DEFAULT_HELPER_TIMEOUT_SECONDS = 4.0
+DEFAULT_HELPER_KILL_TIMEOUT_SECONDS = 0.2
 REUSED_RECORDING_MARKER = "live-audio.reused-recording"
 
 
@@ -47,6 +48,7 @@ class MacOSCaptureRuntime:
         )
         self.helper_source = Path.cwd() / "services/macos-capture-agent/helper/ScreenCaptureKitHelper.swift"
         self._processes: dict[Path, subprocess.Popen[bytes]] = {}
+        self._timed_out_helper: subprocess.Popen[str] | None = None
 
     async def list_targets(self) -> list[dict[str, Any]]:
         payload = await asyncio.to_thread(self._run_helper_json, ["targets"])
@@ -190,27 +192,56 @@ class MacOSCaptureRuntime:
 
     def _run_helper_json(self, args: list[str]) -> dict[str, Any]:
         command = self._helper_command(args)
+        self._raise_if_timed_out_helper_is_still_alive()
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=self._helper_timeout_seconds(),
-            )
+            stdout, stderr = process.communicate(timeout=self._helper_timeout_seconds())
         except subprocess.TimeoutExpired as exc:
-            raise MacOSCaptureRuntimeError(
-                "macOS screen capture timed out while listing targets. Quit and reopen thirdeye, then refresh."
-            ) from exc
-        if result.returncode != 0:
-            self._raise_helper_error(result.stderr.strip() or result.stdout.strip() or "helper failed")
+            helper_stopped = self._kill_timed_out_helper(process)
+            if not helper_stopped:
+                self._timed_out_helper = process
+            raise MacOSCaptureRuntimeError(self._helper_timeout_message(requires_macos_restart=not helper_stopped)) from exc
+        if process.returncode != 0:
+            self._raise_helper_error(stderr.strip() or stdout.strip() or "helper failed")
         try:
-            payload = json.loads(result.stdout)
+            payload = json.loads(stdout)
         except json.JSONDecodeError as exc:
             raise MacOSCaptureRuntimeError("helper returned invalid JSON") from exc
         if not isinstance(payload, dict):
             raise MacOSCaptureRuntimeError("helper returned an invalid response")
         return payload
+
+    def _raise_if_timed_out_helper_is_still_alive(self) -> None:
+        if self._timed_out_helper is None:
+            return
+        if self._timed_out_helper.poll() is not None:
+            self._timed_out_helper = None
+            return
+        raise MacOSCaptureRuntimeError(self._helper_timeout_message(requires_macos_restart=True))
+
+    def _helper_timeout_message(self, *, requires_macos_restart: bool) -> str:
+        if requires_macos_restart:
+            return "macOS screen capture is not responding. Restart your Mac, reopen thirdeye, then refresh targets."
+        return "macOS screen capture timed out while listing targets. Quit and reopen thirdeye, then refresh targets. If it keeps happening, restart your Mac."
+
+    def _kill_timed_out_helper(self, process: subprocess.Popen[str]) -> bool:
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        stopped = True
+        try:
+            process.wait(timeout=self._helper_kill_timeout_seconds())
+        except subprocess.TimeoutExpired:
+            stopped = False
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                with contextlib.suppress(OSError):
+                    pipe.close()
+        return stopped
 
     def _start_long_running_helper(
         self,
@@ -372,6 +403,9 @@ class MacOSCaptureRuntime:
 
     def _helper_timeout_seconds(self) -> float:
         return float(os.environ.get("MACOS_CAPTURE_HELPER_TIMEOUT_SECONDS", str(DEFAULT_HELPER_TIMEOUT_SECONDS)))
+
+    def _helper_kill_timeout_seconds(self) -> float:
+        return float(os.environ.get("MACOS_CAPTURE_HELPER_KILL_TIMEOUT_SECONDS", str(DEFAULT_HELPER_KILL_TIMEOUT_SECONDS)))
 
     def _stop_file_for_pid_file(self, pid_file: Path) -> Path:
         return pid_file.with_suffix(".stop")

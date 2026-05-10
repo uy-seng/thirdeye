@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
@@ -157,6 +158,141 @@ def test_start_services_restarts_supervised_stale_controller_api(monkeypatch, tm
     assert calls[0] == ("stop", "controller-api")
     assert calls[1] == ("wait", local_services.CONTROLLER_API_PORT)
     assert calls[2][0:2] == ("spawn", "controller-api")
+
+
+def test_start_services_restarts_supervised_macos_agent_from_different_repo(monkeypatch, tmp_path: Path) -> None:
+    from core import local_services
+
+    calls: list[tuple[str, str] | tuple[str, int] | tuple[str, str, str]] = []
+    repo_root = tmp_path / "repo"
+    old_repo_root = tmp_path / "old-repo"
+    runtime_root = tmp_path / "runtime"
+    supervisor_dir = runtime_root / "supervisor"
+    repo_root.mkdir()
+    old_repo_root.mkdir()
+    supervisor_dir.mkdir(parents=True)
+    (repo_root / "Makefile").write_text("help:\n", encoding="utf-8")
+    (repo_root / "infra").mkdir()
+    (repo_root / "infra" / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    (supervisor_dir / "macos-capture-agent.pid").write_text("1234", encoding="utf-8")
+    (supervisor_dir / "macos-capture-agent.json").write_text(
+        json.dumps({"repo_root": str(old_repo_root)}),
+        encoding="utf-8",
+    )
+
+    open_ports = {local_services.CONTROLLER_API_PORT, local_services.MACOS_CAPTURE_PORT}
+
+    def fake_is_port_open(port: int) -> bool:
+        return port in open_ports
+
+    def fake_stop_supervised_service(selected_runtime_root: Path, name: str) -> None:
+        calls.append(("stop", name))
+        open_ports.discard(local_services.MACOS_CAPTURE_PORT)
+
+    def fake_spawn_service(*, repo_root: Path, runtime_root: Path, name: str, command: str) -> None:
+        calls.append(("spawn", name, command))
+        if name == "macos-capture-agent":
+            open_ports.add(local_services.MACOS_CAPTURE_PORT)
+
+    monkeypatch.setattr(local_services, "is_port_open", fake_is_port_open)
+    monkeypatch.setattr(
+        local_services,
+        "ensure_macos_capture_helper",
+        lambda repo_root: repo_root / "services" / "macos-capture-agent" / "bin" / "helper",
+    )
+    monkeypatch.setattr(local_services, "controller_api_supports_desktops", lambda: True, raising=False)
+    monkeypatch.setattr(local_services, "controller_api_supports_processed_microphone", lambda: True, raising=False)
+    monkeypatch.setattr(local_services, "stop_supervised_service", fake_stop_supervised_service, raising=False)
+    monkeypatch.setattr(local_services, "wait_for_port_closed", lambda port: calls.append(("wait", port)), raising=False)
+    monkeypatch.setattr(local_services, "spawn_service", fake_spawn_service)
+    monkeypatch.setattr(local_services, "wait_for_port_open", lambda port, name: None)
+
+    result = local_services.start_services(repo_root=repo_root, runtime_root=runtime_root)
+
+    assert result["ok"] is True
+    assert calls[0] == ("stop", "macos-capture-agent")
+    assert calls[1] == ("wait", local_services.MACOS_CAPTURE_PORT)
+    assert calls[2][0:2] == ("spawn", "macos-capture-agent")
+
+
+def test_start_services_restarts_supervised_controller_api_from_different_repo(monkeypatch, tmp_path: Path) -> None:
+    from core import local_services
+
+    calls: list[tuple[str, str] | tuple[str, int] | tuple[str, str, str]] = []
+    repo_root = tmp_path / "repo"
+    old_repo_root = tmp_path / "old-repo"
+    runtime_root = tmp_path / "runtime"
+    supervisor_dir = runtime_root / "supervisor"
+    repo_root.mkdir()
+    old_repo_root.mkdir()
+    supervisor_dir.mkdir(parents=True)
+    (repo_root / "Makefile").write_text("help:\n", encoding="utf-8")
+    (repo_root / "infra").mkdir()
+    (repo_root / "infra" / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    (supervisor_dir / "controller-api.pid").write_text("1234", encoding="utf-8")
+    (supervisor_dir / "controller-api.json").write_text(
+        json.dumps({"repo_root": str(old_repo_root)}),
+        encoding="utf-8",
+    )
+
+    open_ports = {local_services.CONTROLLER_API_PORT, local_services.MACOS_CAPTURE_PORT}
+
+    def fake_is_port_open(port: int) -> bool:
+        return port in open_ports
+
+    def fake_stop_supervised_service(selected_runtime_root: Path, name: str) -> None:
+        calls.append(("stop", name))
+        open_ports.discard(local_services.CONTROLLER_API_PORT)
+
+    def fake_spawn_service(*, repo_root: Path, runtime_root: Path, name: str, command: str) -> None:
+        calls.append(("spawn", name, command))
+        if name == "controller-api":
+            open_ports.add(local_services.CONTROLLER_API_PORT)
+
+    monkeypatch.setattr(local_services, "is_port_open", fake_is_port_open)
+    monkeypatch.setattr(
+        local_services,
+        "ensure_macos_capture_helper",
+        lambda repo_root: repo_root / "services" / "macos-capture-agent" / "bin" / "helper",
+    )
+    monkeypatch.setattr(local_services, "controller_api_supports_desktops", lambda: True, raising=False)
+    monkeypatch.setattr(local_services, "controller_api_supports_processed_microphone", lambda: True, raising=False)
+    monkeypatch.setattr(local_services, "stop_supervised_service", fake_stop_supervised_service, raising=False)
+    monkeypatch.setattr(local_services, "wait_for_port_closed", lambda port: calls.append(("wait", port)), raising=False)
+    monkeypatch.setattr(local_services, "spawn_service", fake_spawn_service)
+    monkeypatch.setattr(local_services, "wait_for_port_open", lambda port, name: None)
+
+    result = local_services.start_services(repo_root=repo_root, runtime_root=runtime_root)
+
+    assert result["ok"] is True
+    assert calls[0] == ("stop", "controller-api")
+    assert calls[1] == ("wait", local_services.CONTROLLER_API_PORT)
+    assert calls[2][0:2] == ("spawn", "controller-api")
+
+
+def test_spawn_service_writes_repo_metadata(monkeypatch, tmp_path: Path) -> None:
+    from core import local_services
+
+    class FakeProcess:
+        pid = 1234
+
+    def fake_popen(*args, **kwargs):
+        return FakeProcess()
+
+    repo_root = tmp_path / "repo"
+    runtime_root = tmp_path / "runtime"
+    repo_root.mkdir()
+    monkeypatch.setattr(local_services.subprocess, "Popen", fake_popen)
+
+    local_services.spawn_service(
+        repo_root=repo_root,
+        runtime_root=runtime_root,
+        name="controller-api",
+        command="python -m uvicorn api.main:create_app",
+    )
+
+    metadata = json.loads((runtime_root / "supervisor" / "controller-api.json").read_text(encoding="utf-8"))
+    assert metadata["repo_root"] == str(repo_root.resolve())
 
 
 def test_start_services_restarts_supervised_controller_api_without_processed_microphone(monkeypatch, tmp_path: Path) -> None:

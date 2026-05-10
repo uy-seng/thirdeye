@@ -49,4 +49,4 @@ make test-all
 make services-stop
 ```
 
-The macOS app's Stop services button stops app-managed local services. On-demand desktops should be destroyed from the app. Use `docker compose --profile openclaw -f infra/compose.yaml down` only when you need to stop the optional OpenClaw helper.
+The macOS app's Stop services button stops app-managed local services. On-demand desktops should be destroyed from the app. Use `docker compose --project-name thirdeye -f infra/compose.yaml --profile openclaw down` only when you need to stop the optional OpenClaw helper.

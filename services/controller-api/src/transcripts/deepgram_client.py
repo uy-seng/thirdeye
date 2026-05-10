@@ -136,6 +136,8 @@ class DeepgramClient:
         sample_rate: int = 16000,
         channels: int = 1,
     ):
+        if self.settings.deepgram_api_key.strip() in {"", "replace-me"}:
+            raise RuntimeError("Deepgram API key is missing. Add DEEPGRAM_API_KEY to .env.")
         return await websockets.connect(
             self.websocket_url(
                 model=model,

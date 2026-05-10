@@ -269,13 +269,22 @@ export function App() {
   }, []);
 
   async function handleStart() {
-    setNotice((await startLocalServices()).detail);
-    await refreshStatus();
+    try {
+      setNotice((await startLocalServices()).detail);
+      await refreshStatus();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to start local services.");
+    }
   }
 
   async function handleStopServices() {
-    setNotice((await stopLocalServices()).detail);
-    await refreshStatus();
+    setNotice("Stopping local services...");
+    try {
+      setNotice((await stopLocalServices()).detail);
+      await refreshStatus();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to stop local services.");
+    }
   }
 
   async function startCaptureMicrophone(jobId: string, microphoneStream: MediaStream | null = null) {

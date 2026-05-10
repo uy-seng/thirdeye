@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import stat
+import subprocess
 import textwrap
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -194,6 +195,87 @@ def test_run_helper_json_times_out_and_stops_stuck_helper(tmp_path: Path, monkey
 
     helper_pid = int(pid_file.read_text(encoding="utf-8"))
     assert not runtime._pid_is_running(helper_pid)
+
+
+def test_run_helper_json_does_not_wait_forever_after_timeout(tmp_path: Path, monkeypatch) -> None:
+    class UnreapableProcess:
+        pid = 1234
+        returncode = None
+
+        def __init__(self, *args, **kwargs) -> None:
+            self.killed = False
+            self.stdout = None
+            self.stderr = None
+
+        def communicate(self, input=None, timeout=None):
+            if timeout is None:
+                raise AssertionError("communicate without a timeout would hang")
+            raise subprocess.TimeoutExpired(cmd=["helper"], timeout=timeout)
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, timeout=None):
+            if timeout is None:
+                raise AssertionError("wait without a timeout would hang")
+            raise subprocess.TimeoutExpired(cmd=["helper"], timeout=timeout)
+
+        def poll(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+    helper = tmp_path / "helper"
+    helper.write_text("#!/bin/sh\n", encoding="utf-8")
+    runtime = MacOSCaptureRuntime()
+    runtime.helper_bin = helper
+    monkeypatch.setenv("MACOS_CAPTURE_HELPER_TIMEOUT_SECONDS", "0.1")
+    monkeypatch.setattr(subprocess, "Popen", UnreapableProcess)
+
+    with pytest.raises(MacOSCaptureRuntimeError, match="Restart your Mac"):
+        runtime._run_helper_json(["targets"])
+
+
+def test_run_helper_json_does_not_spawn_again_while_timed_out_helper_is_alive(tmp_path: Path, monkeypatch) -> None:
+    class UnreapableProcess:
+        instances: list["UnreapableProcess"] = []
+        pid = 1234
+        returncode = None
+
+        def __init__(self, *args, **kwargs) -> None:
+            self.stdout = None
+            self.stderr = None
+            self.instances.append(self)
+
+        def communicate(self, input=None, timeout=None):
+            raise subprocess.TimeoutExpired(cmd=["helper"], timeout=timeout)
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired(cmd=["helper"], timeout=timeout)
+
+        def poll(self):
+            return None
+
+    helper = tmp_path / "helper"
+    helper.write_text("#!/bin/sh\n", encoding="utf-8")
+    runtime = MacOSCaptureRuntime()
+    runtime.helper_bin = helper
+    monkeypatch.setenv("MACOS_CAPTURE_HELPER_TIMEOUT_SECONDS", "0.1")
+    monkeypatch.setattr(subprocess, "Popen", UnreapableProcess)
+
+    with pytest.raises(MacOSCaptureRuntimeError, match="Restart your Mac"):
+        runtime._run_helper_json(["targets"])
+    with pytest.raises(MacOSCaptureRuntimeError, match="Restart your Mac"):
+        runtime._run_helper_json(["targets"])
+
+    assert len(UnreapableProcess.instances) == 1
 
 
 def test_list_targets_keeps_displays_applications_and_windows(monkeypatch) -> None:

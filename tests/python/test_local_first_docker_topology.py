@@ -93,6 +93,16 @@ def test_openclaw_restart_uses_thirdeye_compose_project_name(tmp_path: Path) -> 
     )
 
 
+def test_macos_app_targets_build_capture_helper_and_start_openclaw_only_when_needed() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "macos-app-dev: macos-capture-build openclaw-up" in makefile
+    assert "macos-app-build: macos-capture-build openclaw-up" in makefile
+    assert "openclaw-up:" in makefile
+    assert 'curl -fsS "$(OPENCLAW_HEALTH_URL)"' in makefile
+    assert "$(MAKE) up-openclaw" in makefile
+
+
 def test_compose_does_not_enable_isolated_desktop_basic_auth() -> None:
     compose = (ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8")
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")

@@ -233,6 +233,37 @@ def test_start_job_failure_marks_job_failed_and_allows_retry(client, monkeypatch
     assert retry.status_code == 200
 
 
+def test_start_job_deepgram_auth_failure_fails_job_and_stops_capture(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    backend = runtime.capture.capture_backends.require("macos_local")
+
+    async def fail_start(job_id: str, stream_factory, job_options: dict[str, object], source: str = "system") -> None:
+        raise RuntimeError("Deepgram rejected the API key. Check DEEPGRAM_API_KEY in .env.")
+
+    monkeypatch.setattr(runtime.capture.relay_manager, "start", fail_start)
+
+    failed = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "Deepgram auth failure",
+            "capture_backend": "macos_local",
+            "capture_target": {
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        },
+    )
+
+    assert failed.status_code == 502
+    assert failed.json()["detail"] == "Deepgram rejected the API key. Check DEEPGRAM_API_KEY in .env."
+    assert runtime.jobs.active_jobs() == []
+    status = asyncio.run(backend.status({"id": "display:main"}))
+    assert status["recording"]["running"] is False
+    assert status["live_audio"]["running"] is False
+
+
 def test_live_websocket_rebroadcasts_and_stop_finalizes_artifacts(client) -> None:
     create_desktop_session(client)
     start = client.post("/api/jobs/start", json={"title": "Authorized public livestream"})

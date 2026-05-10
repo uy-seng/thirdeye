@@ -15,6 +15,15 @@ RelaySource = str
 RelayKey = tuple[str, RelaySource]
 
 
+def deepgram_error_message(exc: Exception) -> str:
+    message = str(exc).strip() or exc.__class__.__name__
+    if "HTTP 401" in message:
+        return "Deepgram rejected the API key. Check DEEPGRAM_API_KEY in .env."
+    if "HTTP 403" in message:
+        return "Deepgram refused access for this API key. Check the key permissions in Deepgram."
+    return message
+
+
 class RelayManager:
     def __init__(
         self,
@@ -47,8 +56,22 @@ class RelayManager:
         if self.is_running(job_id, source):
             return
         stop_event = asyncio.Event()
+        try:
+            websocket = await self.deepgram_client.connect(
+                model=job_options["model"],
+                language=job_options.get("language"),
+                diarize=job_options["diarize"],
+                smart_format=job_options["smart_format"],
+                interim_results=job_options["interim_results"],
+                vad_events=self.settings.deepgram_vad_events,
+            )
+        except Exception as exc:  # pragma: no cover - network
+            message = deepgram_error_message(exc)
+            await self.on_degraded(job_id, message)
+            raise RuntimeError(message) from exc
+
         self._stop_events[key] = stop_event
-        task = asyncio.create_task(self._run(job_id, stream_factory, stop_event, job_options, source))
+        task = asyncio.create_task(self._run(job_id, stream_factory, websocket, stop_event, source))
         task.add_done_callback(lambda _: self._cleanup_key(key))
         self._tasks[key] = task
 
@@ -83,23 +106,10 @@ class RelayManager:
         self,
         job_id: str,
         stream_factory: Callable[[], Any],
+        websocket: Any,
         stop_event: asyncio.Event,
-        job_options: dict[str, Any],
         source: RelaySource,
     ) -> None:
-        try:
-            websocket = await self.deepgram_client.connect(
-                model=job_options["model"],
-                language=job_options.get("language"),
-                diarize=job_options["diarize"],
-                smart_format=job_options["smart_format"],
-                interim_results=job_options["interim_results"],
-                vad_events=self.settings.deepgram_vad_events,
-            )
-        except Exception as exc:  # pragma: no cover - network
-            await self.on_degraded(job_id, str(exc))
-            return
-
         async def sender() -> None:
             try:
                 async for chunk in stream_factory():
@@ -109,7 +119,7 @@ class RelayManager:
                 await websocket.send(json.dumps({"type": "Finalize"}))
                 await websocket.send(json.dumps({"type": "CloseStream"}))
             except Exception as exc:  # pragma: no cover - network
-                await self.on_degraded(job_id, str(exc))
+                await self.on_degraded(job_id, deepgram_error_message(exc))
 
         async def receiver() -> None:
             try:
@@ -118,6 +128,11 @@ class RelayManager:
                         continue
                     await self.on_event(job_id, self._tag_event(source, json.loads(message)))
             except Exception as exc:  # pragma: no cover - network
-                await self.on_degraded(job_id, str(exc))
+                await self.on_degraded(job_id, deepgram_error_message(exc))
 
-        await asyncio.gather(sender(), receiver())
+        try:
+            await asyncio.gather(sender(), receiver())
+        finally:
+            close = getattr(websocket, "close", None)
+            if close is not None:
+                await close()
