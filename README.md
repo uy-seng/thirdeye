@@ -177,11 +177,10 @@ The root `requirements.txt` installs:
 If you want to capture a local app, window, or display on this Mac, build the ScreenCaptureKit helper once:
 
 ```bash
-brew install speexdsp pkg-config
 make macos-capture-build
 ```
 
-This produces `services/macos-capture-agent/bin/macos_capture_helper`. SpeexDSP is used for speaker echo reduction when microphone recording is enabled.
+This produces `services/macos-capture-agent/bin/macos_capture_helper`.
 
 ## macOS App
 

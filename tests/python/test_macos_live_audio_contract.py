@@ -116,16 +116,16 @@ def test_macos_runtime_mute_audio_starts_at_current_recording_time() -> None:
     assert "audioInput.append(sampleBuffer)" not in helper
 
 
-def test_macos_helper_uses_speexdsp_for_audible_echo_cancellation() -> None:
+def test_macos_helper_does_not_build_speaker_echo_reduction() -> None:
     helper = (ROOT / "services" / "macos-capture-agent" / "helper" / "ScreenCaptureKitHelper.swift").read_text(encoding="utf-8")
     build_script = (ROOT / "scripts" / "build_macos_capture_helper.sh").read_text(encoding="utf-8")
 
-    assert "import CSpeexDSP" in helper
-    assert "speex_echo_state_init" in helper
-    assert "speex_echo_playback" in helper
-    assert "speex_echo_capture" in helper
-    assert "SpeexEchoCanceller" in helper
-    assert "--echo-cancellation" in helper
-    assert "echoCancellationEnabled" in helper
-    assert "pkg-config speexdsp" in build_script
-    assert "module CSpeexDSP" in build_script
+    assert "import CSpeexDSP" not in helper
+    assert "speex_echo_state_init" not in helper
+    assert "speex_echo_playback" not in helper
+    assert "speex_echo_capture" not in helper
+    assert "SpeexEchoCanceller" not in helper
+    assert "--echo-cancellation" not in helper
+    assert "echoCancellationEnabled" not in helper
+    assert "pkg-config speexdsp" not in build_script
+    assert "module CSpeexDSP" not in build_script

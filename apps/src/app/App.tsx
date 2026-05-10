@@ -9,7 +9,6 @@ import {
   getDesktops,
   getJob,
   getJobs,
-  setEchoCancellationEnabled,
   setRecordMicrophoneEnabled,
   setTargetAudioMuted,
   stopCapture,
@@ -18,11 +17,12 @@ import {
 import { userVisibleArtifacts } from "../lib/artifacts";
 import { chooseSelectedJobId } from "../lib/job-selection";
 import { ACTIVE_STATES, canDeleteJob, canStopCapture, recordMicrophoneEnabled } from "../lib/job-state";
-import { getServiceStatus, startLocalServices, stopLocalServices } from "../lib/services";
+import { getServiceStatus, requestMicrophoneAccess, startLocalServices, stopLocalServices } from "../lib/services";
 import type { ArtifactFile, DesktopSession, JobDetailResponse, JobResponse, ServiceStatus } from "../lib/types";
 import { useSilenceNotification } from "../lib/use-silence-notification";
 import {
-  requestProcessedMicrophoneStream,
+  formatVoiceNoteRecordingError,
+  requestAuthorizedMicrophoneStream,
   startMicrophonePcmStream,
   stopMediaStream,
   type MicrophonePcmStreamSession,
@@ -73,7 +73,6 @@ export function App() {
   const [stoppingJobId, setStoppingJobId] = useState<string | null>(null);
   const [mutingJobId, setMutingJobId] = useState<string | null>(null);
   const [microphoneJobId, setMicrophoneJobId] = useState<string | null>(null);
-  const [echoCancellationJobId, setEchoCancellationJobId] = useState<string | null>(null);
   const [confirmingDeleteJobId, setConfirmingDeleteJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactFile[]>([]);
@@ -288,7 +287,7 @@ export function App() {
       stopMediaStream(microphoneStream);
       return;
     }
-    const stream = microphoneStream ?? (await requestProcessedMicrophoneStream());
+    const stream = microphoneStream ?? (await requestAuthorizedMicrophoneStream({ requestAccess: requestMicrophoneAccess }));
     try {
       const session = await startMicrophonePcmStream({
         stream,
@@ -390,7 +389,7 @@ export function App() {
     let microphoneStream: MediaStream | null = null;
     try {
       if (enabled) {
-        microphoneStream = await requestProcessedMicrophoneStream();
+        microphoneStream = await requestAuthorizedMicrophoneStream({ requestAccess: requestMicrophoneAccess });
         await setRecordMicrophoneEnabled(jobId, true);
         await startCaptureMicrophone(jobId, microphoneStream);
         microphoneStream = null;
@@ -407,23 +406,9 @@ export function App() {
         await setRecordMicrophoneEnabled(jobId, false).catch(() => undefined);
         await stopCapture(jobId).catch(() => undefined);
       }
-      setNotice(error instanceof Error ? error.message : "Unable to change microphone.");
+      setNotice(formatVoiceNoteRecordingError(error));
     } finally {
       setMicrophoneJobId(null);
-    }
-  }
-
-  async function handleSetEchoCancellation(jobId: string, enabled: boolean) {
-    setEchoCancellationJobId(jobId);
-    try {
-      await setEchoCancellationEnabled(jobId, enabled);
-      await loadJobs(jobId);
-      await loadSelectedJob(jobId);
-      setNotice("");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Unable to change echo reduction.");
-    } finally {
-      setEchoCancellationJobId(null);
     }
   }
 
@@ -538,10 +523,8 @@ export function App() {
             <LiveJobSelector jobs={activeJobs} selectedJobId={liveJobListItem.id} onSelect={handleSelectLiveJob} />
             <LiveCaptureControls
               job={liveJobListItem}
-              echoCancellationPending={echoCancellationJobId === liveJobListItem.id}
               microphonePending={microphoneJobId === liveJobListItem.id}
               mutePending={mutingJobId === liveJobListItem.id}
-              onSetEchoCancellation={(jobId, enabled) => void handleSetEchoCancellation(jobId, enabled)}
               onSetRecordMicrophone={(jobId, enabled) => void handleSetRecordMicrophone(jobId, enabled)}
               onSetMuted={(jobId, muted) => void handleSetTargetAudioMuted(jobId, muted)}
             />

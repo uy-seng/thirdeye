@@ -8,6 +8,7 @@ import {
   isAudibleMicrophoneInput,
   mergeTranscriptEvent,
   processedMicrophoneAudioConstraints,
+  requestAuthorizedMicrophoneStream,
   startMicrophonePcmStream,
 } from "../lib/voice-note-audio";
 import type { TranscriptBlock } from "../lib/types";
@@ -54,6 +55,44 @@ test("processed microphone constraints request browser voice processing", () => 
       autoGainControl: true,
     },
   });
+});
+
+test("authorized microphone stream asks native permission before WebView audio", async () => {
+  const calls: string[] = [];
+  const stream = { getTracks: () => [] } as unknown as MediaStream;
+
+  const result = await requestAuthorizedMicrophoneStream({
+    requestAccess: async () => {
+      calls.push("native-permission");
+      return true;
+    },
+    requestStream: async () => {
+      calls.push("webview-stream");
+      return stream;
+    },
+  });
+
+  assert.equal(result, stream);
+  assert.deepEqual(calls, ["native-permission", "webview-stream"]);
+});
+
+test("authorized microphone stream does not request WebView audio when native permission is denied", async () => {
+  const calls: string[] = [];
+
+  await assert.rejects(
+    requestAuthorizedMicrophoneStream({
+      requestAccess: async () => {
+        calls.push("native-permission");
+        return false;
+      },
+      requestStream: async () => {
+        calls.push("webview-stream");
+        return { getTracks: () => [] } as unknown as MediaStream;
+      },
+    }),
+    (error) => error instanceof DOMException && error.name === "NotAllowedError",
+  );
+  assert.deepEqual(calls, ["native-permission"]);
 });
 
 test("microphone websocket startup surfaces server warning messages", async () => {

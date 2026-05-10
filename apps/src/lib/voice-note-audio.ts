@@ -20,6 +20,11 @@ export type MicrophonePcmStreamSession = {
   stop: (options?: { finalize?: boolean; timeoutMs?: number }) => Promise<void>;
 };
 
+export type AuthorizedMicrophoneStreamOptions = {
+  requestAccess: () => Promise<boolean>;
+  requestStream?: () => Promise<MediaStream>;
+};
+
 type MicrophonePcmStreamOptions = {
   stream: MediaStream;
   url: string;
@@ -122,6 +127,17 @@ export async function requestProcessedMicrophoneStream() {
     throw new Error("Microphone recording is not available in this window.");
   }
   return navigator.mediaDevices.getUserMedia(processedMicrophoneAudioConstraints);
+}
+
+export async function requestAuthorizedMicrophoneStream({
+  requestAccess,
+  requestStream = requestProcessedMicrophoneStream,
+}: AuthorizedMicrophoneStreamOptions) {
+  const microphoneAllowed = await requestAccess();
+  if (!microphoneAllowed) {
+    throw new DOMException("Microphone permission was denied.", "NotAllowedError");
+  }
+  return requestStream();
 }
 
 export function stopMediaStream(stream: MediaStream | null | undefined) {

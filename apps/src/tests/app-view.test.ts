@@ -318,15 +318,17 @@ test("start session exposes recording and summary options", () => {
   assert.doesNotMatch(captureSource, />\s*Test alert\s*</);
   assert.match(captureSource, /silence_timeout_minutes: SILENCE_NOTIFICATION_TIMEOUT_MINUTES/);
   assert.match(captureSource, /const \[recordMicrophone, setRecordMicrophone\] = useState\(false\);/);
-  assert.match(captureSource, /const \[echoCancellation, setEchoCancellation\] = useState\(true\);/);
   assert.match(captureSource, /Record microphone/);
   assert.match(captureSource, /Use your microphone without changing other apps\./);
-  assert.match(captureSource, /Reduce speaker echo/);
-  assert.match(captureSource, /Keeps session audio playing while cleaning your microphone\./);
-  assert.match(captureSource, /requestProcessedMicrophoneStream/);
+  assert.doesNotMatch(captureSource, /echoCancellation/);
+  assert.doesNotMatch(captureSource, /Reduce speaker echo/);
+  assert.doesNotMatch(captureSource, /Keeps session audio playing while cleaning your microphone\./);
+  assert.match(captureSource, /requestMicrophoneAccess/);
+  assert.match(captureSource, /requestAuthorizedMicrophoneStream\(\{ requestAccess: requestMicrophoneAccess \}\)/);
+  assert.match(captureSource, /Asking for microphone access/);
   assert.match(captureSource, /const shouldRecordMicrophone = canRecordMicrophone \? recordMicrophone : false/);
   assert.match(captureSource, /record_microphone: shouldRecordMicrophone/);
-  assert.match(captureSource, /echo_cancellation_enabled: shouldRecordMicrophone \? echoCancellation : false/);
+  assert.doesNotMatch(captureSource, /echo_cancellation_enabled/);
   assert.match(captureSource, /Mute this app for me/);
   assert.match(captureSource, /This mutes the selected app while capture runs\./);
   assert.doesNotMatch(captureSource, /Google Chrome/);
@@ -347,15 +349,16 @@ test("start session hides checkbox options that are not available", () => {
 test("live view exposes a runtime app mute toggle for active captures", () => {
   assert.match(appSource, /setTargetAudioMuted/);
   assert.match(appSource, /setRecordMicrophoneEnabled/);
-  assert.match(appSource, /setEchoCancellationEnabled/);
+  assert.doesNotMatch(appSource, /setEchoCancellationEnabled/);
+  assert.match(appSource, /requestAuthorizedMicrophoneStream\(\{ requestAccess: requestMicrophoneAccess \}\)/);
   assert.match(appSource, /startCaptureMicrophone/);
   assert.match(appSource, /captureMicrophoneLiveUrl/);
   assert.match(appSource, /const \[mutingJobId, setMutingJobId\] = useState<string \| null>\(null\);/);
   assert.match(appSource, /const \[microphoneJobId, setMicrophoneJobId\] = useState<string \| null>\(null\);/);
-  assert.match(appSource, /const \[echoCancellationJobId, setEchoCancellationJobId\] = useState<string \| null>\(null\);/);
+  assert.doesNotMatch(appSource, /echoCancellationJobId/);
   assert.match(appSource, /async function handleSetTargetAudioMuted\(jobId: string, muted: boolean\)/);
   assert.match(appSource, /async function handleSetRecordMicrophone\(jobId: string, enabled: boolean\)/);
-  assert.match(appSource, /async function handleSetEchoCancellation\(jobId: string, enabled: boolean\)/);
+  assert.doesNotMatch(appSource, /handleSetEchoCancellation/);
   assert.match(appSource, /<LiveCaptureControls/);
   assert.match(liveControlsSource, /VolumeX/);
   assert.match(liveControlsSource, /Volume2/);
@@ -369,10 +372,10 @@ test("live view exposes a runtime app mute toggle for active captures", () => {
   assert.match(liveControlsSource, /canToggleMicrophoneRecording/);
   assert.match(liveControlsSource, /targetAudioMuted/);
   assert.match(liveControlsSource, /recordMicrophoneEnabled/);
-  assert.match(liveControlsSource, /Reduce speaker echo/);
-  assert.match(liveControlsSource, /Keeps session audio playing while cleaning your microphone\./);
-  assert.match(liveControlsSource, /echoCancellationEnabled/);
-  assert.match(liveControlsSource, /canToggleEchoCancellation/);
+  assert.doesNotMatch(liveControlsSource, /Reduce speaker echo/);
+  assert.doesNotMatch(liveControlsSource, /Keeps session audio playing while cleaning your microphone\./);
+  assert.doesNotMatch(liveControlsSource, /echoCancellationEnabled/);
+  assert.doesNotMatch(liveControlsSource, /canToggleEchoCancellation/);
 });
 
 test("live transcript splits system audio and microphone into separate sections", () => {
@@ -388,7 +391,9 @@ test("voice notes are available as a separate recording workspace", () => {
   assert.match(navigationSource, /view: "voice-notes"/);
   assert.match(appSource, /visibleView === "voice-notes"/);
   assert.match(appSource, /<VoiceNotesPanel \/>/);
-  assert.match(voiceNotesSource, /requestProcessedMicrophoneStream\(\)/);
+  assert.match(voiceNotesSource, /requestMicrophoneAccess/);
+  assert.match(voiceNotesSource, /requestAuthorizedMicrophoneStream\(\{ requestAccess: requestMicrophoneAccess \}\)/);
+  assert.match(voiceNotesSource, /Asking for microphone access/);
   assert.match(voiceNotesSource, /new MediaRecorder\(stream\)/);
   assert.match(voiceNotesSource, /new WebSocket\(voiceNoteLiveUrl\(\)\)/);
   assert.match(voiceNotesSource, /encodeLinear16/);

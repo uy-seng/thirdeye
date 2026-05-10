@@ -20,7 +20,6 @@ class CaptureCommandRequest(BaseModel):
     target: CaptureTarget | None = None
     mute_target_audio: bool = False
     record_microphone: bool = False
-    echo_cancellation_enabled: bool = False
 
 
 def read_pid(path: Path) -> int | None:

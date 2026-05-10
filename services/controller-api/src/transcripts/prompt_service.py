@@ -12,6 +12,11 @@ from transcripts.summary_cache import TranscriptSummaryCache
 from core.utils import format_offset, isoformat, utcnow
 
 CANONICAL_SUMMARY_PROMPT_FILE = "canonical_summary.txt"
+TRANSCRIPT_PROMPT_SOURCE_ORDER = ("system", "microphone")
+TRANSCRIPT_PROMPT_SOURCE_LABELS = {
+    "system": "System Recording",
+    "microphone": "Self",
+}
 
 
 def default_canonical_summary_prompt() -> str:
@@ -63,6 +68,7 @@ class TranscriptPromptService:
         job, normalized_prompt, transcript_text, source = self._prepare_request(
             job_id=job_id,
             prompt=prompt if prompt is not None else default_canonical_summary_prompt(),
+            refresh_snapshot=True,
         )
         markdown, provider = await self._request_summary(
             prompt=normalized_prompt,
@@ -105,13 +111,13 @@ class TranscriptPromptService:
         )
         return artifact
 
-    def _prepare_request(self, *, job_id: str, prompt: str) -> tuple[Any, str, str, TranscriptSummarySource]:
+    def _prepare_request(self, *, job_id: str, prompt: str, refresh_snapshot: bool = False) -> tuple[Any, str, str, TranscriptSummarySource]:
         normalized_prompt = prompt.strip()
         if not normalized_prompt:
             raise ValueError("prompt is required")
 
         job = self.jobs.get_job(job_id)
-        snapshot = self.transcript_store.snapshot(job_id)
+        snapshot = self.transcript_store.refresh(job_id) if refresh_snapshot else self.transcript_store.snapshot(job_id)
         transcript_text, source = self._serialize_snapshot(snapshot)
         if not transcript_text:
             raise ValueError("transcript snapshot is empty")
@@ -147,36 +153,92 @@ class TranscriptPromptService:
         return markdown if markdown.endswith("\n") else f"{markdown}\n"
 
     def _serialize_snapshot(self, snapshot: dict[str, Any]) -> tuple[str, TranscriptSummarySource]:
+        sources = snapshot.get("sources")
+        if isinstance(sources, dict):
+            return self._serialize_source_snapshots(sources)
+
         final_blocks = snapshot.get("final_blocks") or []
         interim = str(snapshot.get("interim") or "").strip()
+        lines, final_block_count, interim_included = self._serialize_lines(
+            final_blocks=final_blocks,
+            interim=interim,
+            source=None,
+        )
+        source = TranscriptSummarySource(
+            final_block_count=final_block_count,
+            interim_included=interim_included,
+        )
+        return ("\n".join(lines).strip(), source)
+
+    def _serialize_source_snapshots(self, sources: dict[str, Any]) -> tuple[str, TranscriptSummarySource]:
         lines: list[str] = []
+        final_block_count = 0
+        interim_included = False
+
+        for source in TRANSCRIPT_PROMPT_SOURCE_ORDER:
+            source_snapshot = sources.get(source)
+            if not isinstance(source_snapshot, dict):
+                continue
+
+            source_lines, source_final_count, source_interim_included = self._serialize_lines(
+                final_blocks=source_snapshot.get("final_blocks") or [],
+                interim=str(source_snapshot.get("interim") or "").strip(),
+                source=source,
+            )
+            if not source_lines:
+                continue
+
+            if lines:
+                lines.append("")
+            lines.append(f"{TRANSCRIPT_PROMPT_SOURCE_LABELS[source]}:")
+            lines.extend(source_lines)
+            final_block_count += source_final_count
+            interim_included = interim_included or source_interim_included
+
+        source = TranscriptSummarySource(
+            final_block_count=final_block_count,
+            interim_included=interim_included,
+        )
+        return ("\n".join(lines).strip(), source)
+
+    def _serialize_lines(self, *, final_blocks: list[Any], interim: str, source: str | None) -> tuple[list[str], int, bool]:
+        lines: list[str] = []
+        final_block_count = 0
         for block in final_blocks:
+            if not isinstance(block, dict):
+                continue
             text = str(block.get("text") or "").strip()
             if not text:
                 continue
             start = block.get("start")
             end = block.get("end")
             speaker = block.get("speaker")
-            prefix = self._line_prefix(start=start, end=end, speaker=speaker)
+            prefix = self._line_prefix(start=start, end=end, speaker=speaker, source=source)
             lines.append(f"{prefix}{text}")
+            final_block_count += 1
         if interim:
-            lines.append(f"[DRAFT] {interim}")
-        source = TranscriptSummarySource(
-            final_block_count=len([block for block in final_blocks if str(block.get('text') or '').strip()]),
-            interim_included=bool(interim),
-        )
-        return ("\n".join(lines).strip(), source)
+            lines.append(f"[DRAFT] {self._speaker_label(speaker=None, source=source)}{interim}")
+        return lines, final_block_count, bool(interim)
 
     @staticmethod
-    def _line_prefix(*, start: Any, end: Any, speaker: Any) -> str:
+    def _line_prefix(*, start: Any, end: Any, speaker: Any, source: str | None) -> str:
         parts: list[str] = []
         if isinstance(start, (float, int)):
             label = format_offset(float(start))
             if isinstance(end, (float, int)):
                 label = f"{label}-{format_offset(float(end))}"
             parts.append(f"[{label}]")
-        if speaker is not None:
-            parts.append(f"Speaker {speaker}:")
+        speaker_label = TranscriptPromptService._speaker_label(speaker=speaker, source=source)
+        if speaker_label:
+            parts.append(speaker_label)
         if not parts:
             return ""
         return " ".join(parts) + " "
+
+    @staticmethod
+    def _speaker_label(*, speaker: Any, source: str | None) -> str:
+        if source == "microphone":
+            return "Self:"
+        if speaker is not None:
+            return f"Speaker {speaker}:"
+        return ""

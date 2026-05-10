@@ -203,7 +203,6 @@ export function startCapture(payload: {
   capture_target?: CaptureTarget;
   record_screen: boolean;
   record_microphone: boolean;
-  echo_cancellation_enabled?: boolean;
   generate_summary: boolean;
   mute_target_audio: boolean;
   notify_on_inactivity: boolean;
@@ -218,7 +217,6 @@ export function startCapture(payload: {
       capture_target: payload.capture_target,
       record_screen: payload.record_screen,
       record_microphone: payload.record_microphone,
-      echo_cancellation_enabled: Boolean(payload.echo_cancellation_enabled),
       generate_summary: payload.generate_summary,
       mute_target_audio: payload.mute_target_audio,
       notify_on_inactivity: payload.notify_on_inactivity,
@@ -238,23 +236,13 @@ export function setTargetAudioMuted(jobId: string, muteTargetAudio: boolean) {
   });
 }
 
-export function setRecordMicrophoneEnabled(jobId: string, recordMicrophone: boolean, echoCancellationEnabled?: boolean) {
-  const payload: { record_microphone: boolean; echo_cancellation_enabled?: boolean } = {
+export function setRecordMicrophoneEnabled(jobId: string, recordMicrophone: boolean) {
+  const payload = {
     record_microphone: recordMicrophone,
   };
-  if (echoCancellationEnabled !== undefined) {
-    payload.echo_cancellation_enabled = echoCancellationEnabled;
-  }
   return apiJson<JobResponse>(`/api/jobs/${jobId}/record-microphone`, {
     method: "POST",
     body: JSON.stringify(payload),
-  });
-}
-
-export function setEchoCancellationEnabled(jobId: string, echoCancellationEnabled: boolean) {
-  return apiJson<JobResponse>(`/api/jobs/${jobId}/echo-cancellation`, {
-    method: "POST",
-    body: JSON.stringify({ echo_cancellation_enabled: echoCancellationEnabled }),
   });
 }
 

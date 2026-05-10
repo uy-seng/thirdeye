@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import plistlib
 from pathlib import Path
 
 
@@ -47,11 +49,22 @@ def test_macos_app_microphone_usage_copy_mentions_voice_notes() -> None:
     assert "voice notes" in info_plist
 
 
+def test_macos_app_hardened_runtime_allows_audio_input() -> None:
+    tauri_config = json.loads((ROOT / "apps" / "tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
+    macos_config = tauri_config["bundle"]["macOS"]
+    entitlements_path = ROOT / "apps" / "tauri" / macos_config["entitlements"]
+    entitlements = plistlib.loads(entitlements_path.read_bytes())
+
+    assert macos_config["hardenedRuntime"] is True
+    assert entitlements["com.apple.security.device.audio-input"] is True
+
+
 def test_macos_app_build_target_builds_and_opens_dmg() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert "MACOS_APP_DMG_DIR ?= $(MACOS_APP_DIR)/tauri/target/release/bundle/dmg" in makefile
     assert 'npm run build -- --bundles dmg' in makefile
+    assert 'CI=true npm run build -- --bundles dmg' not in makefile
     assert 'find "$(MACOS_APP_DMG_DIR)" -maxdepth 1 -type f -name \'*.dmg\'' in makefile
     assert 'open "$$dmg_path"' in makefile
 
@@ -64,6 +77,15 @@ def test_tauri_controller_api_command_uses_runtime_logs_root() -> None:
 
     assert "DEBUG_LOGS_ROOT={}" in command_source
     assert 'shell_escape(&runtime_root.join("logs"))' in command_source
+
+
+def test_macos_app_restarts_capture_agent_when_helper_health_is_missing() -> None:
+    source = (ROOT / "apps" / "tauri" / "src" / "local_services.rs").read_text(encoding="utf-8")
+
+    assert "macos_capture_helper_is_missing()" in source
+    assert 'local_http_get(MACOS_CAPTURE_PORT, "/health"' in source
+    assert '== Some("missing")' in source
+    assert "stop_macos_capture_listener" in source
 
 
 def test_macos_capture_helper_excludes_thirdeye_ui_from_display_captures() -> None:

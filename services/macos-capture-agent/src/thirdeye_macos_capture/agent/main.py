@@ -87,7 +87,6 @@ async def start_recording(request: CommandRequest) -> JSONResponse:
             request.target.model_dump(),
             request.mute_target_audio,
             request.record_microphone,
-            request.echo_cancellation_enabled,
         )
     except Exception as exc:
         raise _http_error(exc) from exc
@@ -115,7 +114,6 @@ async def start_live_audio(request: CommandRequest) -> JSONResponse:
             request.target.model_dump(),
             request.mute_target_audio,
             request.record_microphone,
-            request.echo_cancellation_enabled,
         )
         fanout.reset()
         fanout.ensure_running()
@@ -168,21 +166,6 @@ async def set_record_microphone_enabled(request: CommandRequest) -> JSONResponse
         microphone_fanout.reset()
         if request.record_microphone:
             microphone_fanout.ensure_running()
-    except Exception as exc:
-        raise _http_error(exc) from exc
-    return JSONResponse(payload)
-
-
-@app.post("/echo-cancellation")
-async def set_echo_cancellation_enabled(request: CommandRequest) -> JSONResponse:
-    if request.target is None:
-        raise HTTPException(status_code=422, detail="target is required")
-    try:
-        payload = await runtime.set_echo_cancellation_enabled(
-            request.job_id,
-            request.target.model_dump(),
-            request.echo_cancellation_enabled,
-        )
     except Exception as exc:
         raise _http_error(exc) from exc
     return JSONResponse(payload)

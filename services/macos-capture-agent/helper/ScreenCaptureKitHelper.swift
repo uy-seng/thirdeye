@@ -3,7 +3,6 @@ import AudioToolbox
 import AVFoundation
 import CoreAudio
 import CoreMedia
-import CSpeexDSP
 import Darwin
 import Foundation
 import ScreenCaptureKit
@@ -154,12 +153,9 @@ enum HelperCommand {
         muteStateFile: URL?,
         microphoneCommandFile: URL?,
         microphoneStateFile: URL?,
-        echoCancellationCommandFile: URL?,
-        echoCancellationStateFile: URL?,
         target: CaptureTarget,
         muteTargetAudio: Bool,
-        recordMicrophone: Bool,
-        echoCancellationEnabled: Bool
+        recordMicrophone: Bool
     )
     case liveAudio(
         fifoPath: URL,
@@ -169,12 +165,9 @@ enum HelperCommand {
         muteStateFile: URL?,
         microphoneCommandFile: URL?,
         microphoneStateFile: URL?,
-        echoCancellationCommandFile: URL?,
-        echoCancellationStateFile: URL?,
         target: CaptureTarget,
         muteTargetAudio: Bool,
-        recordMicrophone: Bool,
-        echoCancellationEnabled: Bool
+        recordMicrophone: Bool
     )
 
     static func parse(arguments: [String]) throws -> HelperCommand {
@@ -197,12 +190,9 @@ enum HelperCommand {
                 muteStateFile: optionalValue(named: "--mute-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 microphoneCommandFile: optionalValue(named: "--microphone-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 microphoneStateFile: optionalValue(named: "--microphone-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
-                echoCancellationCommandFile: optionalValue(named: "--echo-cancellation-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
-                echoCancellationStateFile: optionalValue(named: "--echo-cancellation-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 target: try parseTarget(arguments: arguments),
                 muteTargetAudio: arguments.contains("--mute-target-audio"),
-                recordMicrophone: arguments.contains("--record-microphone"),
-                echoCancellationEnabled: arguments.contains("--echo-cancellation")
+                recordMicrophone: arguments.contains("--record-microphone")
             )
         case "live-audio":
             return .liveAudio(
@@ -213,12 +203,9 @@ enum HelperCommand {
                 muteStateFile: optionalValue(named: "--mute-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 microphoneCommandFile: optionalValue(named: "--microphone-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 microphoneStateFile: optionalValue(named: "--microphone-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
-                echoCancellationCommandFile: optionalValue(named: "--echo-cancellation-command-file", in: arguments).map { URL(fileURLWithPath: $0) },
-                echoCancellationStateFile: optionalValue(named: "--echo-cancellation-state-file", in: arguments).map { URL(fileURLWithPath: $0) },
                 target: try parseTarget(arguments: arguments),
                 muteTargetAudio: arguments.contains("--mute-target-audio"),
-                recordMicrophone: arguments.contains("--record-microphone"),
-                echoCancellationEnabled: arguments.contains("--echo-cancellation")
+                recordMicrophone: arguments.contains("--record-microphone")
             )
         default:
             throw HelperError.invalidArguments("unknown command: \(command)")
@@ -270,18 +257,6 @@ struct MicrophoneCommandState: Codable {
     let error: String?
 }
 
-struct EchoCancellationCommand: Codable {
-    let id: String
-    let echo_cancellation_enabled: Bool
-}
-
-struct EchoCancellationCommandState: Codable {
-    let id: String
-    let ok: Bool
-    let echo_cancellation_enabled: Bool
-    let error: String?
-}
-
 struct ResolvedTarget {
     let filter: SCContentFilter
     let width: Int
@@ -296,41 +271,30 @@ enum CaptureMode {
         liveAudioFifoPath: URL?,
         microphoneFifoPath: URL?,
         muteTargetAudio: Bool,
-        recordMicrophone: Bool,
-        echoCancellationEnabled: Bool
+        recordMicrophone: Bool
     )
     case liveAudio(
         fifoPath: URL,
         microphoneFifoPath: URL?,
         muteTargetAudio: Bool,
-        recordMicrophone: Bool,
-        echoCancellationEnabled: Bool
+        recordMicrophone: Bool
     )
 
     var muteTargetAudio: Bool {
         switch self {
-        case .record(_, _, _, _, let muteTargetAudio, _, _):
+        case .record(_, _, _, _, let muteTargetAudio, _):
             return muteTargetAudio
-        case .liveAudio(_, _, let muteTargetAudio, _, _):
+        case .liveAudio(_, _, let muteTargetAudio, _):
             return muteTargetAudio
         }
     }
 
     var recordMicrophone: Bool {
         switch self {
-        case .record(_, _, _, _, _, let recordMicrophone, _):
+        case .record(_, _, _, _, _, let recordMicrophone):
             return recordMicrophone
-        case .liveAudio(_, _, _, let recordMicrophone, _):
+        case .liveAudio(_, _, _, let recordMicrophone):
             return recordMicrophone
-        }
-    }
-
-    var echoCancellationEnabled: Bool {
-        switch self {
-        case .record(_, _, _, _, _, _, let echoCancellationEnabled):
-            return echoCancellationEnabled
-        case .liveAudio(_, _, _, _, let echoCancellationEnabled):
-            return echoCancellationEnabled
         }
     }
 }
@@ -758,83 +722,6 @@ final class ProcessTapAudioCapture {
     }
 }
 
-final class SpeexEchoCanceller {
-    private static let sampleRate = 16_000
-    private static let frameSampleCount = 320
-    private static let frameByteCount = frameSampleCount * MemoryLayout<Int16>.stride
-    private static let tailSampleCount = 3_200
-
-    private let state: OpaquePointer
-    private var playbackBuffer = Data()
-    private var microphoneBuffer = Data()
-
-    init?() {
-        guard let state = speex_echo_state_init(CInt(Self.frameSampleCount), CInt(Self.tailSampleCount)) else {
-            return nil
-        }
-        self.state = state
-        var sampleRate = CInt(Self.sampleRate)
-        speex_echo_ctl(state, SPEEX_ECHO_SET_SAMPLING_RATE, &sampleRate)
-    }
-
-    deinit {
-        speex_echo_state_destroy(state)
-    }
-
-    func enqueuePlayback(_ data: Data) {
-        guard !data.isEmpty else {
-            return
-        }
-        playbackBuffer.append(data)
-        while playbackBuffer.count >= Self.frameByteCount {
-            let frameData = Data(playbackBuffer.prefix(Self.frameByteCount))
-            playbackBuffer.removeFirst(Self.frameByteCount)
-            let samples = Self.samples(from: frameData)
-            samples.withUnsafeBufferPointer { buffer in
-                guard let baseAddress = buffer.baseAddress else {
-                    return
-                }
-                speex_echo_playback(state, baseAddress)
-            }
-        }
-    }
-
-    func processMicrophone(_ data: Data) -> Data {
-        guard !data.isEmpty else {
-            return Data()
-        }
-        microphoneBuffer.append(data)
-        var output = Data()
-        while microphoneBuffer.count >= Self.frameByteCount {
-            let frameData = Data(microphoneBuffer.prefix(Self.frameByteCount))
-            microphoneBuffer.removeFirst(Self.frameByteCount)
-            let samples = Self.samples(from: frameData)
-            var cleaned = [Int16](repeating: 0, count: Self.frameSampleCount)
-            samples.withUnsafeBufferPointer { inputBuffer in
-                cleaned.withUnsafeMutableBufferPointer { outputBuffer in
-                    guard let inputAddress = inputBuffer.baseAddress,
-                          let outputAddress = outputBuffer.baseAddress else {
-                        return
-                    }
-                    speex_echo_capture(state, inputAddress, outputAddress)
-                }
-            }
-            cleaned.withUnsafeBufferPointer { buffer in
-                output.append(Data(buffer: buffer))
-            }
-        }
-        return output
-    }
-
-    private static func samples(from data: Data) -> [Int16] {
-        var samples = [Int16](repeating: 0, count: frameSampleCount)
-        samples.withUnsafeMutableBytes { destination in
-            _ = data.copyBytes(to: destination)
-        }
-        return samples
-    }
-}
-
 final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
     private let mode: CaptureMode
     private let target: CaptureTarget
@@ -844,7 +731,6 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
     private var targetAppProcessID: pid_t?
     private var targetAudioMuted: Bool
     private var recordMicrophone: Bool
-    private var echoCancellationEnabled: Bool
     private var microphoneOutputAdded = false
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -854,7 +740,6 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
     private var liveAudioConverter: AVAudioConverter?
     private var liveAudioSourceFormat: AVAudioFormat?
     private var recordingAudioFormat: AVAudioFormat?
-    private var echoCanceller: SpeexEchoCanceller?
     private var processTapAudioCapture: ProcessTapAudioCapture?
     private var didStartWriting = false
     private var didFinish = false
@@ -880,8 +765,6 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         self.target = target
         self.targetAudioMuted = mode.muteTargetAudio
         self.recordMicrophone = mode.recordMicrophone
-        self.echoCancellationEnabled = mode.echoCancellationEnabled
-        self.echoCanceller = mode.echoCancellationEnabled ? SpeexEchoCanceller() : nil
     }
 
     func start() async throws {
@@ -899,12 +782,6 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         if targetAudioMuted && recordMicrophone {
             throw HelperError.invalidArguments("record microphone cannot be combined with muted app audio")
         }
-        if echoCancellationEnabled && !recordMicrophone {
-            throw HelperError.invalidArguments("echo cancellation requires microphone recording")
-        }
-        if echoCancellationEnabled && echoCanceller == nil {
-            throw HelperError.writerFailed("failed to initialize echo cancellation")
-        }
         if recordMicrophone,
            !ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)) {
             throw HelperError.microphoneCaptureUnsupported
@@ -916,7 +793,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
             muteTargetAudio: targetAudioMuted,
             recordMicrophone: recordMicrophone
         )
-        if case .record(let outputFile, let recordsAudio, let liveAudioFifoPath, let microphoneFifoPath, _, _, _) = mode {
+        if case .record(let outputFile, let recordsAudio, let liveAudioFifoPath, let microphoneFifoPath, _, _) = mode {
             try prepareWriter(
                 outputFile: outputFile,
                 width: resolved.width,
@@ -932,7 +809,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
                 microphoneAudioFileDescriptor = try prepareFIFO(at: microphoneFifoPath)
             }
         }
-        if case .liveAudio(let fifoPath, let microphoneFifoPath, _, _, _) = mode {
+        if case .liveAudio(let fifoPath, let microphoneFifoPath, _, _) = mode {
             liveAudioFileDescriptor = try prepareFIFO(at: fifoPath)
             if let microphoneFifoPath {
                 microphoneAudioFileDescriptor = try prepareFIFO(at: microphoneFifoPath)
@@ -1080,41 +957,15 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
         }
 
         let previousRecordMicrophone = recordMicrophone
-        let previousEchoCancellationEnabled = echoCancellationEnabled
         recordMicrophone = enabled
-        if !enabled {
-            echoCancellationEnabled = false
-            echoCanceller = nil
-        }
         do {
             try await updateStreamAudioConfiguration()
             try setMicrophoneOutputAdded(enabled)
         } catch {
             recordMicrophone = previousRecordMicrophone
-            echoCancellationEnabled = previousEchoCancellationEnabled
-            echoCanceller = previousEchoCancellationEnabled ? SpeexEchoCanceller() : nil
             try? await updateStreamAudioConfiguration()
             try? setMicrophoneOutputAdded(previousRecordMicrophone)
             throw error
-        }
-    }
-
-    func setEchoCancellation(_ enabled: Bool) async throws {
-        guard echoCancellationEnabled != enabled else {
-            return
-        }
-        if enabled && !recordMicrophone {
-            throw HelperError.invalidArguments("turn on microphone recording before reducing speaker echo")
-        }
-        echoCancellationEnabled = enabled
-        if enabled {
-            guard let canceller = SpeexEchoCanceller() else {
-                echoCancellationEnabled = false
-                throw HelperError.writerFailed("failed to initialize echo cancellation")
-            }
-            echoCanceller = canceller
-        } else {
-            echoCanceller = nil
         }
     }
 
@@ -1244,9 +1095,6 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
               !data.isEmpty else {
             return
         }
-        if echoCancellationEnabled {
-            echoCanceller?.enqueuePlayback(data)
-        }
         guard let fileDescriptor = liveAudioFileDescriptor else {
             return
         }
@@ -1267,29 +1115,8 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func appendMicrophoneRecordingSample(_ sampleBuffer: CMSampleBuffer) {
-        if !echoCancellationEnabled {
-            appendRecordingAudioSample(sampleBuffer, failurePrefix: "microphone recording audio append failed")
-            writeMicrophoneAudioSample(sampleBuffer)
-            return
-        }
-
-        guard let data = cleanedMicrophoneLinear16Data(from: sampleBuffer),
-              !data.isEmpty else {
-            return
-        }
-        if let fileDescriptor = microphoneAudioFileDescriptor {
-            audioWriteQueue.async {
-                Self.writeAll(data, to: fileDescriptor)
-            }
-        }
-        guard let sourceBuffer = liveAudioPCMBuffer(from: data) else {
-            return
-        }
-        appendRecordingAudioBuffer(
-            sourceBuffer,
-            presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
-            failurePrefix: "microphone recording audio append failed"
-        )
+        appendRecordingAudioSample(sampleBuffer, failurePrefix: "microphone recording audio append failed")
+        writeMicrophoneAudioSample(sampleBuffer)
     }
 
     private func writeProcessTapAudio(_ captured: CapturedTapAudio) {
@@ -1569,13 +1396,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func cleanedMicrophoneLinear16Data(from sampleBuffer: CMSampleBuffer) -> Data? {
-        guard let data = liveAudioLinear16Data(from: sampleBuffer) else {
-            return nil
-        }
-        guard echoCancellationEnabled else {
-            return data
-        }
-        return echoCanceller?.processMicrophone(data) ?? Data()
+        return liveAudioLinear16Data(from: sampleBuffer)
     }
 
     private func liveAudioPCMBuffer(from data: Data) -> AVAudioPCMBuffer? {
@@ -1766,7 +1587,7 @@ final class StreamController: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private static func hasAudioOutput(for mode: CaptureMode) -> Bool {
         switch mode {
-        case .record(_, let recordsAudio, let liveAudioFifoPath, _, _, _, _):
+        case .record(_, let recordsAudio, let liveAudioFifoPath, _, _, _):
             return recordsAudio || liveAudioFifoPath != nil
         case .liveAudio:
             return true
@@ -1986,8 +1807,6 @@ func runStream(command: HelperCommand) async throws {
     let muteStateFile: URL?
     let microphoneCommandFile: URL?
     let microphoneStateFile: URL?
-    let echoCancellationCommandFile: URL?
-    let echoCancellationStateFile: URL?
     switch command {
     case .record(
         let outputFile,
@@ -1999,12 +1818,9 @@ func runStream(command: HelperCommand) async throws {
         let commandMuteStateFile,
         let commandMicrophoneFile,
         let commandMicrophoneStateFile,
-        let commandEchoCancellationFile,
-        let commandEchoCancellationStateFile,
         let captureTarget,
         let muteTargetAudio,
-        let recordMicrophone,
-        let echoCancellationEnabled
+        let recordMicrophone
     ):
         target = captureTarget
         mode = .record(
@@ -2013,16 +1829,13 @@ func runStream(command: HelperCommand) async throws {
             liveAudioFifoPath: liveAudioFifoPath,
             microphoneFifoPath: microphoneFifoPath,
             muteTargetAudio: muteTargetAudio,
-            recordMicrophone: recordMicrophone,
-            echoCancellationEnabled: echoCancellationEnabled
+            recordMicrophone: recordMicrophone
         )
         stopFile = commandStopFile
         muteCommandFile = commandMuteFile
         muteStateFile = commandMuteStateFile
         microphoneCommandFile = commandMicrophoneFile
         microphoneStateFile = commandMicrophoneStateFile
-        echoCancellationCommandFile = commandEchoCancellationFile
-        echoCancellationStateFile = commandEchoCancellationStateFile
     case .liveAudio(
         let fifoPath,
         let microphoneFifoPath,
@@ -2031,28 +1844,22 @@ func runStream(command: HelperCommand) async throws {
         let commandMuteStateFile,
         let commandMicrophoneFile,
         let commandMicrophoneStateFile,
-        let commandEchoCancellationFile,
-        let commandEchoCancellationStateFile,
         let captureTarget,
         let muteTargetAudio,
-        let recordMicrophone,
-        let echoCancellationEnabled
+        let recordMicrophone
     ):
         target = captureTarget
         mode = .liveAudio(
             fifoPath: fifoPath,
             microphoneFifoPath: microphoneFifoPath,
             muteTargetAudio: muteTargetAudio,
-            recordMicrophone: recordMicrophone,
-            echoCancellationEnabled: echoCancellationEnabled
+            recordMicrophone: recordMicrophone
         )
         stopFile = commandStopFile
         muteCommandFile = commandMuteFile
         muteStateFile = commandMuteStateFile
         microphoneCommandFile = commandMicrophoneFile
         microphoneStateFile = commandMicrophoneStateFile
-        echoCancellationCommandFile = commandEchoCancellationFile
-        echoCancellationStateFile = commandEchoCancellationStateFile
     case .targets:
         return
     }
@@ -2084,11 +1891,6 @@ func runStream(command: HelperCommand) async throws {
         stateFile: microphoneStateFile,
         controller: controller
     )
-    let echoCancellationCommandFileWatcher = makeEchoCancellationCommandFileWatcher(
-        commandFile: echoCancellationCommandFile,
-        stateFile: echoCancellationStateFile,
-        controller: controller
-    )
 
     try await controller.start()
     try await controller.waitUntilStopped()
@@ -2097,7 +1899,6 @@ func runStream(command: HelperCommand) async throws {
     _ = stopFileWatcher
     _ = muteCommandFileWatcher
     _ = microphoneCommandFileWatcher
-    _ = echoCancellationCommandFileWatcher
 }
 
 func makeStopFileWatcher(stopFile: URL?, controller: StreamController) -> Task<Void, Never>? {
@@ -2195,46 +1996,6 @@ func makeMicrophoneCommandFileWatcher(commandFile: URL?, stateFile: URL?, contro
     }
 }
 
-func makeEchoCancellationCommandFileWatcher(commandFile: URL?, stateFile: URL?, controller: StreamController) -> Task<Void, Never>? {
-    guard let commandFile, let stateFile else {
-        return nil
-    }
-    return Task.detached {
-        var lastCommandID: String?
-        while !Task.isCancelled {
-            if let data = try? Data(contentsOf: commandFile),
-               let command = try? JSONDecoder().decode(EchoCancellationCommand.self, from: data),
-               command.id != lastCommandID {
-                lastCommandID = command.id
-                do {
-                    try await controller.setEchoCancellation(command.echo_cancellation_enabled)
-                    try writeEchoCancellationCommandState(
-                        stateFile,
-                        state: EchoCancellationCommandState(
-                            id: command.id,
-                            ok: true,
-                            echo_cancellation_enabled: command.echo_cancellation_enabled,
-                            error: nil
-                        )
-                    )
-                } catch {
-                    let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                    try? writeEchoCancellationCommandState(
-                        stateFile,
-                        state: EchoCancellationCommandState(
-                            id: command.id,
-                            ok: false,
-                            echo_cancellation_enabled: command.echo_cancellation_enabled,
-                            error: message
-                        )
-                    )
-                }
-            }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-    }
-}
-
 func writeMuteCommandState(_ stateFile: URL, state: MuteCommandState) throws {
     let data = try JSONEncoder().encode(state)
     try FileManager.default.createDirectory(at: stateFile.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -2242,12 +2003,6 @@ func writeMuteCommandState(_ stateFile: URL, state: MuteCommandState) throws {
 }
 
 func writeMicrophoneCommandState(_ stateFile: URL, state: MicrophoneCommandState) throws {
-    let data = try JSONEncoder().encode(state)
-    try FileManager.default.createDirectory(at: stateFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try data.write(to: stateFile, options: [.atomic])
-}
-
-func writeEchoCancellationCommandState(_ stateFile: URL, state: EchoCancellationCommandState) throws {
     let data = try JSONEncoder().encode(state)
     try FileManager.default.createDirectory(at: stateFile.deletingLastPathComponent(), withIntermediateDirectories: true)
     try data.write(to: stateFile, options: [.atomic])

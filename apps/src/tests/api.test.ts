@@ -19,7 +19,6 @@ import {
   importVoiceNotes,
   saveVoiceNote,
   saveTranscriptSummary,
-  setEchoCancellationEnabled,
   setRecordMicrophoneEnabled,
   setTargetAudioMuted,
   startCapture,
@@ -332,7 +331,6 @@ test("startCapture sends screen recording and summary preferences", async () => 
       capture_backend: "macos_local",
 	      record_screen: false,
 	      record_microphone: true,
-	      echo_cancellation_enabled: true,
 	      generate_summary: false,
       mute_target_audio: true,
       notify_on_inactivity: false,
@@ -367,7 +365,6 @@ test("startCapture sends screen recording and summary preferences", async () => 
       },
 	      record_screen: false,
 	      record_microphone: true,
-	      echo_cancellation_enabled: true,
 	      generate_summary: false,
       mute_target_audio: true,
       notify_on_inactivity: false,
@@ -497,58 +494,6 @@ test("setRecordMicrophoneEnabled posts the runtime microphone preference", async
     assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/jobs/job-123/record-microphone");
     assert.equal(calls[0]?.init?.method, "POST");
     assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { record_microphone: true });
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("setEchoCancellationEnabled posts the runtime echo cancellation preference", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
-  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ url: String(input), init });
-    return new Response(
-      JSON.stringify({
-        id: "job-123",
-        title: "Live capture",
-        source_url: null,
-        created_at: "2026-04-23T00:00:00Z",
-        started_at: "2026-04-23T00:00:01Z",
-        stopped_at: null,
-        state: "live_streaming",
-        max_duration_minutes: 30,
-        auto_stop_enabled: false,
-        silence_timeout_minutes: 5,
-        recording_path: null,
-        transcript_text_path: null,
-        transcript_events_path: null,
-        summary_path: null,
-        error_message: null,
-        capture_backend: "macos_local",
-        capture_target: {
-          id: "display:main",
-          kind: "display",
-          label: "Built-in Display",
-          app_bundle_id: null,
-          app_name: null,
-          app_pid: null,
-          window_id: null,
-          display_id: "main",
-        },
-        metadata_json: { session_preferences: { record_microphone: true, echo_cancellation_enabled: true } },
-      }),
-      { headers: { "content-type": "application/json" }, status: 200 },
-    );
-  };
-
-  try {
-    const result = await setEchoCancellationEnabled("job-123", true);
-
-    assert.equal(result.metadata_json.session_preferences?.echo_cancellation_enabled, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0]?.url, "http://127.0.0.1:8788/api/jobs/job-123/echo-cancellation");
-    assert.equal(calls[0]?.init?.method, "POST");
-    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), { echo_cancellation_enabled: true });
   } finally {
     globalThis.fetch = originalFetch;
   }

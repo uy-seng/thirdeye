@@ -2,6 +2,19 @@ import type { CaptureTarget } from "../../lib/types";
 
 export type CaptureTargetGroup = { key: string; label: string; targets: CaptureTarget[] };
 
+export function createLatestTargetRequestGate() {
+  let latestRequestId = 0;
+  return {
+    start() {
+      latestRequestId += 1;
+      return latestRequestId;
+    },
+    isLatest(requestId: number) {
+      return requestId === latestRequestId;
+    },
+  };
+}
+
 export function targetLabel(target: CaptureTarget) {
   return target.label;
 }

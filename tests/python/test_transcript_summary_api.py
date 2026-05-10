@@ -8,10 +8,18 @@ from jobs.models import JobCreate
 from transcripts.prompt_service import default_canonical_summary_prompt
 
 
-def append_transcript(runtime, job_id: str, *, final_text: str = "Committed line", interim_text: str | None = None) -> None:
+def append_transcript(
+    runtime,
+    job_id: str,
+    *,
+    final_text: str = "Committed line",
+    interim_text: str | None = None,
+    source: str = "system",
+) -> None:
     runtime.transcript_store.append(
         job_id,
         {
+            "source": source,
             "type": "Results",
             "is_final": True,
             "start": 5.0,
@@ -30,6 +38,7 @@ def append_transcript(runtime, job_id: str, *, final_text: str = "Committed line
         runtime.transcript_store.append(
             job_id,
             {
+                "source": source,
                 "type": "Results",
                 "is_final": False,
                 "start": 8.0,
@@ -106,6 +115,79 @@ def test_generate_transcript_summary_uses_live_snapshot_for_active_jobs(client, 
     assert captured["title"] == "Active Transcript Summary"
     assert "Committed line" in captured["transcript_text"]
     assert "Interim line" in captured["transcript_text"]
+
+
+def test_generate_transcript_summary_combines_system_and_self_transcripts(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(JobCreate(title="Combined Transcript Summary"))
+    append_transcript(runtime, job.id, final_text="Captured answer from the session")
+    append_transcript(runtime, job.id, final_text="My follow up question", interim_text="My draft note", source="microphone")
+
+    captured: dict[str, str] = {}
+
+    async def fake_generate_transcript_summary(
+        *, prompt: str, transcript_text: str, title: str, model: str | None = None
+    ) -> dict[str, str]:
+        captured["transcript_text"] = transcript_text
+        return {
+            "markdown": "# Summary\n\n- Combined summary",
+            "provider": "openclaw/openai-codex",
+        }
+
+    monkeypatch.setattr(
+        runtime.openclaw,
+        "generate_transcript_summary",
+        fake_generate_transcript_summary,
+        raising=False,
+    )
+
+    response = client.post(
+        f"/api/jobs/{job.id}/transcript-summary/generate",
+        json={"prompt": "Summarize the full exchange"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source"] == {"final_block_count": 2, "interim_included": True}
+    assert "System Recording" in captured["transcript_text"]
+    assert "Captured answer from the session" in captured["transcript_text"]
+    assert "Self" in captured["transcript_text"]
+    assert "My follow up question" in captured["transcript_text"]
+    assert "My draft note" in captured["transcript_text"]
+
+
+def test_generate_transcript_summary_can_use_live_self_snapshot_when_events_are_missing(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(JobCreate(title="Self Only Live Summary"))
+    append_transcript(runtime, job.id, final_text="The keyword is potato.", source="microphone")
+    runtime.artifacts.job_paths(job.id).deepgram_events.unlink()
+
+    captured: dict[str, str] = {}
+
+    async def fake_generate_transcript_summary(
+        *, prompt: str, transcript_text: str, title: str, model: str | None = None
+    ) -> dict[str, str]:
+        captured["transcript_text"] = transcript_text
+        return {
+            "markdown": "# Summary\n\n- The keyword is potato.",
+            "provider": "openclaw/openai-codex",
+        }
+
+    monkeypatch.setattr(
+        runtime.openclaw,
+        "generate_transcript_summary",
+        fake_generate_transcript_summary,
+        raising=False,
+    )
+
+    response = client.post(
+        f"/api/jobs/{job.id}/transcript-summary/generate",
+        json={"prompt": "What keyword did the user say?"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source"] == {"final_block_count": 1, "interim_included": False}
+    assert "Self:" in captured["transcript_text"]
+    assert "The keyword is potato." in captured["transcript_text"]
 
 
 def test_generate_transcript_summary_rebuilds_completed_job_snapshot_from_events(client, monkeypatch) -> None:
@@ -354,6 +436,89 @@ def test_rerun_summary_route_uses_openclaw_and_rewrites_canonical_summary(client
     assert captured["title"] == "Canonical Summary"
     assert captured["model"] == "custom-summary-model"
     assert "Canonical transcript line" in captured["transcript_text"]
+
+
+def test_rerun_summary_refreshes_snapshot_before_summarizing_self_transcript(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(JobCreate(title="Canonical Summary With Self"))
+    paths = runtime.artifacts.job_paths(job.id)
+    runtime.transcript_store.append(
+        job.id,
+        {
+            "source": "system",
+            "type": "Results",
+            "is_final": True,
+            "speech_final": True,
+            "start": 1.0,
+            "duration": 1.0,
+            "channel": {
+                "alternatives": [
+                    {
+                        "transcript": "System answer already cached",
+                        "words": [{"speaker": 1, "start": 1.0, "end": 2.0}],
+                    }
+                ]
+            },
+        },
+    )
+    runtime.transcript_store.snapshot(job.id)
+    with paths.deepgram_events.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "source": "microphone",
+                    "type": "Results",
+                    "is_final": True,
+                    "speech_final": True,
+                    "start": 3.0,
+                    "duration": 1.0,
+                    "channel": {
+                        "alternatives": [
+                            {
+                                "transcript": "Self question added before final summary",
+                                "words": [{"speaker": 0, "start": 3.0, "end": 4.0}],
+                            }
+                        ]
+                    },
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+    captured: dict[str, str] = {}
+
+    async def fake_generate_transcript_summary(
+        *, prompt: str, transcript_text: str, title: str, model: str | None = None
+    ) -> dict[str, str]:
+        captured["transcript_text"] = transcript_text
+        return {
+            "markdown": "# Summary\n\nCanonical recap with self\n",
+            "provider": "openclaw/openai-codex",
+        }
+
+    monkeypatch.setattr(
+        runtime.openclaw,
+        "generate_transcript_summary",
+        fake_generate_transcript_summary,
+        raising=False,
+    )
+
+    response = client.post(f"/api/jobs/{job.id}/summary/rerun")
+
+    assert response.status_code == 202
+    for _ in range(100):
+        payload = client.get(f"/api/jobs/{job.id}").json()
+        if payload["metadata_json"].get("summary_status") == "completed":
+            break
+        time.sleep(0.02)
+    else:
+        raise AssertionError("summary rerun did not complete")
+
+    assert "System Recording" in captured["transcript_text"]
+    assert "System answer already cached" in captured["transcript_text"]
+    assert "Self" in captured["transcript_text"]
+    assert "Self question added before final summary" in captured["transcript_text"]
 
 
 def test_duplicate_summary_rerun_requests_reuse_existing_background_run(client, monkeypatch) -> None:

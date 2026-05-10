@@ -122,12 +122,12 @@ fn reconcile_macos_capture_agent(
     let port_open = is_port_open(MACOS_CAPTURE_PORT);
     let active_capture = port_open && macos_capture_has_active_capture();
     let permission_denied = port_open && macos_capture_permission_denied();
+    let helper_missing = port_open && macos_capture_helper_is_missing();
 
     if !child_running && port_open && !active_capture {
         let pid_file = supervisor_pid_file(runtime_root, "macos-capture-agent");
-        if permission_denied || pid_file.exists() {
-            stop_supervised_service(runtime_root, "macos-capture-agent")?;
-            wait_for_port_closed(MACOS_CAPTURE_PORT, Duration::from_secs(3));
+        if permission_denied || helper_missing || pid_file.exists() {
+            stop_macos_capture_listener(runtime_root)?;
         }
     }
 
@@ -282,6 +282,13 @@ fn terminate_process_group(pid: u32, signal: &str) {
         .status();
 }
 
+fn terminate_process(pid: u32, signal: &str) {
+    let _ = Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(pid.to_string())
+        .status();
+}
+
 fn stop_supervised_service(runtime_root: &Path, name: &str) -> Result<(), String> {
     let pid_file = supervisor_pid_file(runtime_root, name);
     if let Some(pid) = read_pid(&pid_file) {
@@ -290,6 +297,24 @@ fn stop_supervised_service(runtime_root: &Path, name: &str) -> Result<(), String
     if pid_file.exists() {
         fs::remove_file(&pid_file)
             .map_err(|error| format!("Unable to remove {name} pid file: {error}"))?;
+    }
+    Ok(())
+}
+
+fn stop_macos_capture_listener(runtime_root: &Path) -> Result<(), String> {
+    stop_supervised_service(runtime_root, "macos-capture-agent")?;
+    if let Some(pid) = listener_pid_for_port(MACOS_CAPTURE_PORT) {
+        terminate_process(pid, "TERM");
+    }
+    wait_for_port_closed(MACOS_CAPTURE_PORT, Duration::from_secs(3));
+    if is_port_open(MACOS_CAPTURE_PORT) {
+        if let Some(pid) = listener_pid_for_port(MACOS_CAPTURE_PORT) {
+            terminate_process(pid, "KILL");
+        }
+        wait_for_port_closed(MACOS_CAPTURE_PORT, Duration::from_secs(1));
+    }
+    if is_port_open(MACOS_CAPTURE_PORT) {
+        return Err("Unable to stop the stale Mac capture service on 127.0.0.1:8791.".to_string());
     }
     Ok(())
 }
@@ -344,6 +369,19 @@ fn macos_capture_has_active_capture() -> bool {
     }
 }
 
+fn macos_capture_helper_is_missing() -> bool {
+    let Ok(response) = local_http_get(MACOS_CAPTURE_PORT, "/health", Duration::from_secs(2)) else {
+        return false;
+    };
+    let Some(body) = http_response_body(&response) else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    payload.get("status").and_then(|value| value.as_str()) == Some("missing")
+}
+
 fn controller_api_supports_desktops() -> bool {
     matches!(
         local_http_status(CONTROLLER_API_PORT, "/api/desktops", Duration::from_secs(2)),
@@ -356,7 +394,7 @@ fn controller_api_supports_processed_microphone() -> bool {
     else {
         return false;
     };
-    let Some(body) = response.split("\r\n\r\n").nth(1) else {
+    let Some(body) = http_response_body(&response) else {
         return false;
     };
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
@@ -401,6 +439,25 @@ fn local_http_get(port: u16, path: &str, timeout: Duration) -> Result<String, St
         .read_to_string(&mut response)
         .map_err(|error| format!("Unable to read local service response: {error}"))?;
     Ok(response)
+}
+
+fn http_response_body(response: &str) -> Option<&str> {
+    response.split("\r\n\r\n").nth(1)
+}
+
+fn listener_pid_for_port(port: u16) -> Option<u32> {
+    let output = Command::new("lsof")
+        .arg("-nP")
+        .arg(format!("-tiTCP:{port}"))
+        .arg("-sTCP:LISTEN")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.trim().parse::<u32>().ok())
 }
 
 fn run_supervisor_json<T: DeserializeOwned>(app: &AppHandle, command: &str) -> Result<T, String> {

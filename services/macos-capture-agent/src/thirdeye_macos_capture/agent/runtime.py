@@ -66,7 +66,6 @@ class MacOSCaptureRuntime:
         target: dict[str, Any],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
-        echo_cancellation_enabled: bool = False,
     ) -> dict[str, Any]:
         if not output_file:
             raise MacOSCaptureRuntimeError("output_file is required")
@@ -94,10 +93,6 @@ class MacOSCaptureRuntime:
             str(self._microphone_command_file("recording")),
             "--microphone-state-file",
             str(self._microphone_state_file("recording")),
-            "--echo-cancellation-command-file",
-            str(self._echo_cancellation_command_file("recording")),
-            "--echo-cancellation-state-file",
-            str(self._echo_cancellation_state_file("recording")),
             "--target-json",
             target_payload,
         ]
@@ -105,8 +100,6 @@ class MacOSCaptureRuntime:
             args.append("--mute-target-audio")
         if record_microphone:
             args.append("--record-microphone")
-        if echo_cancellation_enabled:
-            args.append("--echo-cancellation")
         self._start_long_running_helper(
             args,
             pid_file,
@@ -133,7 +126,6 @@ class MacOSCaptureRuntime:
         target: dict[str, Any],
         mute_target_audio: bool = False,
         record_microphone: bool = False,
-        echo_cancellation_enabled: bool = False,
     ) -> dict[str, Any]:
         fifo_path = self.runtime_dir / "live_audio.pcm"
         microphone_fifo_path = self.runtime_dir / "microphone_audio.pcm"
@@ -170,10 +162,6 @@ class MacOSCaptureRuntime:
             str(self._microphone_command_file("live-audio")),
             "--microphone-state-file",
             str(self._microphone_state_file("live-audio")),
-            "--echo-cancellation-command-file",
-            str(self._echo_cancellation_command_file("live-audio")),
-            "--echo-cancellation-state-file",
-            str(self._echo_cancellation_state_file("live-audio")),
             "--target-json",
             target_payload,
         ]
@@ -181,8 +169,6 @@ class MacOSCaptureRuntime:
             args.append("--mute-target-audio")
         if record_microphone:
             args.append("--record-microphone")
-        if echo_cancellation_enabled:
-            args.append("--echo-cancellation")
         self._start_long_running_helper(
             args,
             pid_file,
@@ -216,14 +202,6 @@ class MacOSCaptureRuntime:
         record_microphone: bool,
     ) -> dict[str, Any]:
         return await asyncio.to_thread(self._set_record_microphone_enabled_sync, record_microphone)
-
-    async def set_echo_cancellation_enabled(
-        self,
-        job_id: str,
-        target: dict[str, Any],
-        echo_cancellation_enabled: bool,
-    ) -> dict[str, Any]:
-        return await asyncio.to_thread(self._set_echo_cancellation_enabled_sync, echo_cancellation_enabled)
 
     async def status(self) -> dict[str, Any]:
         recording_pid = self._running_pid(self.runtime_dir / "recording.pid")
@@ -361,13 +339,6 @@ class MacOSCaptureRuntime:
                 return self._send_microphone_command(pid_file, record_microphone)
         raise MacOSCaptureRuntimeError("capture process is not running")
 
-    def _set_echo_cancellation_enabled_sync(self, echo_cancellation_enabled: bool) -> dict[str, Any]:
-        for pid_file in (self.runtime_dir / "recording.pid", self.runtime_dir / "live-audio.pid"):
-            pid = read_pid(pid_file)
-            if pid is not None and self._pid_file_process_is_running(pid_file, pid):
-                return self._send_echo_cancellation_command(pid_file, echo_cancellation_enabled)
-        raise MacOSCaptureRuntimeError("capture process is not running")
-
     def _send_mute_command(self, pid_file: Path, mute_target_audio: bool) -> dict[str, Any]:
         pid = read_pid(pid_file)
         if pid is None or not self._pid_file_process_is_running(pid_file, pid):
@@ -398,21 +369,6 @@ class MacOSCaptureRuntime:
             raise MacOSCaptureRuntimeError(str(state.get("error") or "failed to update microphone state"))
         return {"pid": pid, "record_microphone": bool(state.get("record_microphone"))}
 
-    def _send_echo_cancellation_command(self, pid_file: Path, echo_cancellation_enabled: bool) -> dict[str, Any]:
-        pid = read_pid(pid_file)
-        if pid is None or not self._pid_file_process_is_running(pid_file, pid):
-            raise MacOSCaptureRuntimeError("capture process is not running")
-
-        command_id = uuid.uuid4().hex
-        command_file = self._echo_cancellation_command_file_for_pid_file(pid_file)
-        state_file = self._echo_cancellation_state_file_for_pid_file(pid_file)
-        payload = {"id": command_id, "echo_cancellation_enabled": echo_cancellation_enabled}
-        self._write_json_atomic(command_file, payload)
-        state = self._wait_for_echo_cancellation_state(state_file, command_id)
-        if not state.get("ok"):
-            raise MacOSCaptureRuntimeError(str(state.get("error") or "failed to update echo cancellation state"))
-        return {"pid": pid, "echo_cancellation_enabled": bool(state.get("echo_cancellation_enabled"))}
-
     def _wait_for_mute_state(self, state_file: Path, command_id: str) -> dict[str, Any]:
         deadline = time.monotonic() + self._mute_command_timeout_seconds()
         while time.monotonic() < deadline:
@@ -432,16 +388,6 @@ class MacOSCaptureRuntime:
                     return payload
             time.sleep(0.05)
         raise MacOSCaptureRuntimeError("timed out changing microphone state")
-
-    def _wait_for_echo_cancellation_state(self, state_file: Path, command_id: str) -> dict[str, Any]:
-        deadline = time.monotonic() + self._echo_cancellation_command_timeout_seconds()
-        while time.monotonic() < deadline:
-            with contextlib.suppress(FileNotFoundError, json.JSONDecodeError):
-                payload = json.loads(state_file.read_text(encoding="utf-8"))
-                if isinstance(payload, dict) and payload.get("id") == command_id:
-                    return payload
-            time.sleep(0.05)
-        raise MacOSCaptureRuntimeError("timed out changing echo cancellation state")
 
     def _write_json_atomic(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -489,9 +435,6 @@ class MacOSCaptureRuntime:
     def _microphone_command_timeout_seconds(self) -> float:
         return float(os.environ.get("MACOS_CAPTURE_MICROPHONE_COMMAND_TIMEOUT_SECONDS", "4.0"))
 
-    def _echo_cancellation_command_timeout_seconds(self) -> float:
-        return float(os.environ.get("MACOS_CAPTURE_ECHO_CANCELLATION_COMMAND_TIMEOUT_SECONDS", "4.0"))
-
     def _helper_timeout_seconds(self) -> float:
         return float(os.environ.get("MACOS_CAPTURE_HELPER_TIMEOUT_SECONDS", str(DEFAULT_HELPER_TIMEOUT_SECONDS)))
 
@@ -513,12 +456,6 @@ class MacOSCaptureRuntime:
     def _microphone_state_file(self, prefix: str) -> Path:
         return self.runtime_dir / f"{prefix}.microphone-state.json"
 
-    def _echo_cancellation_command_file(self, prefix: str) -> Path:
-        return self.runtime_dir / f"{prefix}.echo-cancellation-command.json"
-
-    def _echo_cancellation_state_file(self, prefix: str) -> Path:
-        return self.runtime_dir / f"{prefix}.echo-cancellation-state.json"
-
     def _mute_command_file_for_pid_file(self, pid_file: Path) -> Path:
         prefix = "live-audio" if pid_file.name == "live-audio.pid" else "recording"
         return self._mute_command_file(prefix)
@@ -534,14 +471,6 @@ class MacOSCaptureRuntime:
     def _microphone_state_file_for_pid_file(self, pid_file: Path) -> Path:
         prefix = "live-audio" if pid_file.name == "live-audio.pid" else "recording"
         return self._microphone_state_file(prefix)
-
-    def _echo_cancellation_command_file_for_pid_file(self, pid_file: Path) -> Path:
-        prefix = "live-audio" if pid_file.name == "live-audio.pid" else "recording"
-        return self._echo_cancellation_command_file(prefix)
-
-    def _echo_cancellation_state_file_for_pid_file(self, pid_file: Path) -> Path:
-        prefix = "live-audio" if pid_file.name == "live-audio.pid" else "recording"
-        return self._echo_cancellation_state_file(prefix)
 
     def _reused_recording_marker(self) -> Path:
         return self.runtime_dir / REUSED_RECORDING_MARKER

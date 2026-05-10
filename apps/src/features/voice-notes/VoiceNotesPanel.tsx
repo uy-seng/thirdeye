@@ -21,7 +21,7 @@ import {
   isVoiceNoteTranscriptTextEvent,
   mergedTranscriptText,
   mergeTranscriptEvent,
-  requestProcessedMicrophoneStream,
+  requestAuthorizedMicrophoneStream,
 } from "../../lib/voice-note-audio";
 import {
   clearLegacyVoiceNotes,
@@ -317,11 +317,8 @@ export function VoiceNotesPanel() {
     try {
       setRecordingIssue("");
       setMicrophoneAccessBlocked(false);
-      const microphoneAllowed = await requestMicrophoneAccess();
-      if (!microphoneAllowed) {
-        throw new DOMException("Microphone permission was denied.", "NotAllowedError");
-      }
-      const stream = await requestProcessedMicrophoneStream();
+      setStatus("Asking for microphone access");
+      const stream = await requestAuthorizedMicrophoneStream({ requestAccess: requestMicrophoneAccess });
       const recorder = new MediaRecorder(stream);
 
       chunksRef.current = [];

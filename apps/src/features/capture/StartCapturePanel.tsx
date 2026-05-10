@@ -1,13 +1,14 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { Button, Card, Select, TextInput } from "../../components/ui";
 import { getCaptureTargets, startCapture } from "../../lib/api";
 import { desktopCaptureBusyLabel } from "../../lib/job-state";
+import { requestMicrophoneAccess } from "../../lib/services";
 import { SILENCE_NOTIFICATION_TIMEOUT_MINUTES } from "../../lib/silence-notifications";
 import type { CaptureBackend, CaptureTarget, JobResponse } from "../../lib/types";
-import { requestProcessedMicrophoneStream, stopMediaStream } from "../../lib/voice-note-audio";
+import { formatVoiceNoteRecordingError, requestAuthorizedMicrophoneStream, stopMediaStream } from "../../lib/voice-note-audio";
 import { ScreenRecordingPermissionNotice } from "./ScreenRecordingPermissionNotice";
-import { isScreenRecordingPermissionError, targetGroups, targetLabel } from "./captureTargets";
+import { createLatestTargetRequestGate, isScreenRecordingPermissionError, targetGroups, targetLabel } from "./captureTargets";
 
 type StartCapturePanelProps = {
   activeCaptures?: JobResponse[];
@@ -22,12 +23,12 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
   const [targetId, setTargetId] = useState("");
   const [screenRecord, setScreenRecord] = useState(true);
   const [recordMicrophone, setRecordMicrophone] = useState(false);
-  const [echoCancellation, setEchoCancellation] = useState(true);
   const [muteTargetAudio, setMuteTargetAudio] = useState(false);
   const [generateSummary, setGenerateSummary] = useState(true);
   const [notifyOnInactivity, setNotifyOnInactivity] = useState(true);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const targetRequestGate = useRef(createLatestTargetRequestGate());
   const selectedTarget = targets.find((target) => target.id === targetId);
   const permissionBlocked = backend === "macos_local" && isScreenRecordingPermissionError(message);
   const canRecordMicrophone = backend === "macos_local";
@@ -37,15 +38,22 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
   const muteTargetHelp = "This mutes the selected app while capture runs. The transcript and recording still receive audio.";
 
   async function loadTargets(nextBackend = backend) {
+    const requestId = targetRequestGate.current.start();
     setMessage("");
     try {
       const payload = await getCaptureTargets(nextBackend);
+      if (!targetRequestGate.current.isLatest(requestId)) {
+        return;
+      }
       setTargets(payload.targets);
       setTargetId((current) => (payload.targets.some((target) => target.id === current) ? current : payload.targets[0]?.id ?? ""));
       if (payload.targets.length === 0) {
         setMessage(nextBackend === "docker_desktop" ? "Create an isolated desktop before starting." : "No local displays or windows are available yet.");
       }
     } catch (error) {
+      if (!targetRequestGate.current.isLatest(requestId)) {
+        return;
+      }
       setTargets([]);
       setTargetId("");
       setMessage(error instanceof Error ? error.message : "Unable to load capture options.");
@@ -65,7 +73,6 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
   useEffect(() => {
     if (!canRecordMicrophone) {
       setRecordMicrophone(false);
-      setEchoCancellation(true);
     }
   }, [canRecordMicrophone]);
 
@@ -93,8 +100,8 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
     const shouldRecordMicrophone = canRecordMicrophone ? recordMicrophone : false;
     try {
       if (shouldRecordMicrophone) {
-        setMessage("Preparing microphone...");
-        microphoneStream = await requestProcessedMicrophoneStream();
+        setMessage("Asking for microphone access...");
+        microphoneStream = await requestAuthorizedMicrophoneStream({ requestAccess: requestMicrophoneAccess });
       }
       const job = await startCapture({
         title,
@@ -102,7 +109,6 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
         capture_target: selectedTarget,
         record_screen: screenRecord,
         record_microphone: shouldRecordMicrophone,
-        echo_cancellation_enabled: shouldRecordMicrophone ? echoCancellation : false,
         generate_summary: generateSummary,
         mute_target_audio: canMuteTargetAudio ? muteTargetAudio : false,
         notify_on_inactivity: notifyOnInactivity,
@@ -111,7 +117,7 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
       await onCreated(job, microphoneStream);
       microphoneStream = null;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to start capture.");
+      setMessage(formatVoiceNoteRecordingError(error));
     } finally {
       stopMediaStream(microphoneStream);
       setBusy(false);
@@ -176,15 +182,6 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
               <span>
                 <strong>Record microphone</strong>
                 <small>Use your microphone without changing other apps.</small>
-              </span>
-            </label>
-          ) : null}
-          {canRecordMicrophone && recordMicrophone ? (
-            <label className="option-row">
-              <input checked={echoCancellation} onChange={(event) => setEchoCancellation(event.target.checked)} type="checkbox" />
-              <span>
-                <strong>Reduce speaker echo</strong>
-                <small>Keeps session audio playing while cleaning your microphone.</small>
               </span>
             </label>
           ) : null}

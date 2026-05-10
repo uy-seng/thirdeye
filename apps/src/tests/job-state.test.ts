@@ -3,13 +3,11 @@ import test from "node:test";
 
 import {
   canDeleteJob,
-  canToggleEchoCancellation,
   canStopCapture,
   canToggleMicrophoneRecording,
   canToggleTargetAudioMute,
   completedJobWarnings,
   desktopSessionActivityLabel,
-  echoCancellationEnabled,
   formatStateLabel,
   recordMicrophoneEnabled,
   stateTone,
@@ -131,28 +129,4 @@ test("allows runtime microphone toggles only for active local captures", () => {
   assert.equal(canToggleMicrophoneRecording({ ...localDisplayJob, state: "recording" }), true);
   assert.equal(canToggleMicrophoneRecording({ ...localDisplayJob, state: "pending_start" }), false);
   assert.equal(canToggleMicrophoneRecording(dockerJob), false);
-});
-
-test("allows runtime echo cancellation only for active local microphone captures", () => {
-  const localMicrophoneJob = {
-    state: "live_streaming",
-    capture_backend: "macos_local",
-    capture_target: { kind: "display" },
-    metadata_json: { session_preferences: { record_microphone: true, echo_cancellation_enabled: true } },
-  };
-  const localMicrophoneOffJob = {
-    ...localMicrophoneJob,
-    metadata_json: { session_preferences: { record_microphone: false, echo_cancellation_enabled: true } },
-  };
-  const dockerJob = {
-    ...localMicrophoneJob,
-    capture_backend: "docker_desktop",
-  };
-
-  assert.equal(echoCancellationEnabled(localMicrophoneJob), true);
-  assert.equal(canToggleEchoCancellation(localMicrophoneJob), true);
-  assert.equal(canToggleEchoCancellation({ ...localMicrophoneJob, state: "recording" }), true);
-  assert.equal(canToggleEchoCancellation({ ...localMicrophoneJob, state: "pending_start" }), false);
-  assert.equal(canToggleEchoCancellation(localMicrophoneOffJob), false);
-  assert.equal(canToggleEchoCancellation(dockerJob), false);
 });

@@ -61,8 +61,12 @@ class TranscriptStore:
     def snapshot(self, job_id: str) -> dict[str, Any]:
         if job_id not in self._snapshots:
             self._snapshots[job_id] = self._rebuild(job_id)
-        elif self._snapshots_need_rebuild(self._source_snapshots(job_id)):
-            self._snapshots[job_id] = self._rebuild(job_id)
+        else:
+            snapshots = self._source_snapshots(job_id)
+            if self._snapshots_need_rebuild(snapshots):
+                rebuilt = self._rebuild(job_id)
+                if self._snapshots_have_transcript_text(rebuilt) or not self._snapshots_have_transcript_text(snapshots):
+                    self._snapshots[job_id] = rebuilt
         snapshots = self._source_snapshots(job_id)
         system_snapshot = snapshots["system"]
         return {
@@ -74,6 +78,10 @@ class TranscriptStore:
             },
         }
 
+    def refresh(self, job_id: str) -> dict[str, Any]:
+        self._snapshots[job_id] = self._rebuild(job_id)
+        return self.snapshot(job_id)
+
     def _snapshot_needs_rebuild(self, snapshot: TranscriptSnapshotState) -> bool:
         return any(
             block.get("type") == "final" and block.get("text") and "speech_final" not in block
@@ -82,6 +90,15 @@ class TranscriptStore:
 
     def _snapshots_need_rebuild(self, snapshots: dict[str, TranscriptSnapshotState]) -> bool:
         return any(self._snapshot_needs_rebuild(snapshot) for snapshot in snapshots.values())
+
+    def _snapshots_have_transcript_text(self, snapshots: dict[str, TranscriptSnapshotState]) -> bool:
+        return any(self._snapshot_has_transcript_text(snapshot) for snapshot in snapshots.values())
+
+    @staticmethod
+    def _snapshot_has_transcript_text(snapshot: TranscriptSnapshotState) -> bool:
+        if snapshot.interim.strip():
+            return True
+        return any(str(block.get("text") or "").strip() for block in snapshot.final_blocks)
 
     def _rebuild(self, job_id: str) -> dict[str, TranscriptSnapshotState]:
         snapshots = self._empty_source_snapshots()
