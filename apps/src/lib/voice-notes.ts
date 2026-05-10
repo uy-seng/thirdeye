@@ -1,6 +1,6 @@
 export const VOICE_NOTES_STORAGE_KEY = "thirdeye.voice-notes";
 
-import type { VoiceNote, VoiceNoteSummary } from "./types";
+import type { VoiceNote, VoiceNoteSummary, VoiceNoteSummaryGenerateResponse } from "./types";
 
 export type { VoiceNote, VoiceNoteSummary };
 
@@ -72,6 +72,14 @@ export function createVoiceNote(input: VoiceNoteInput): VoiceNote {
     createdAt: input.createdAt,
     durationMs: input.durationMs,
     audioDataUrl: input.audioDataUrl,
+  };
+}
+
+export function createVoiceNoteSummary(result: VoiceNoteSummaryGenerateResponse, generatedAt = new Date().toISOString()): VoiceNoteSummary {
+  return {
+    markdown: result.markdown,
+    provider: result.provider,
+    generatedAt,
   };
 }
 

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   clearLegacyVoiceNotes,
   createVoiceNote,
+  createVoiceNoteSummary,
   formatVoiceNoteDuration,
   loadLegacyVoiceNotes,
   VOICE_NOTES_STORAGE_KEY,
@@ -102,6 +103,22 @@ test("keeps generated summaries with saved voice notes", () => {
   ]));
 
   assert.equal(loadLegacyVoiceNotes()[0]?.summary?.markdown, "Morgan owns the launch checklist follow-up.");
+});
+
+test("creates a voice note summary from a generated API result", () => {
+  const summary = createVoiceNoteSummary(
+    {
+      markdown: "# Summary\n\n- Follow up tomorrow.",
+      provider: "openclaw/test",
+    },
+    "2026-04-30T16:01:00.000Z",
+  );
+
+  assert.deepEqual(summary, {
+    markdown: "# Summary\n\n- Follow up tomorrow.",
+    provider: "openclaw/test",
+    generatedAt: "2026-04-30T16:01:00.000Z",
+  });
 });
 
 test("formats voice note durations for short recordings", () => {
