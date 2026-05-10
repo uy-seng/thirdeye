@@ -6,6 +6,7 @@ import {
   apiJson,
   apiUrl,
   artifactHref,
+  captureMicrophoneLiveUrl,
   createDesktop,
   deleteVoiceNote,
   deleteJob,
@@ -28,6 +29,10 @@ import {
 test("apiUrl points the native app at the local controller API", () => {
   assert.equal(API_BASE, "http://127.0.0.1:8788");
   assert.equal(apiUrl("/api/jobs"), "http://127.0.0.1:8788/api/jobs");
+});
+
+test("captureMicrophoneLiveUrl points processed capture microphone audio at the job socket", () => {
+  assert.equal(captureMicrophoneLiveUrl("job-123"), "ws://127.0.0.1:8788/ws/jobs/job-123/microphone");
 });
 
 test("artifactHref keeps absolute artifact links and expands local paths", () => {

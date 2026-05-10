@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ LOG_ROOT_ARTIFACT_NAMES = {
     "transcript.json",
     "transcript.txt",
 }
+MEDIA_COMMAND_TIMEOUT_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,122 @@ class ArtifactManager:
 
     def live_audio_stage_path(self, job_id: str) -> Path:
         return ensure_directory(self.recording_root(job_id)) / "live_audio.pcm"
+
+    def microphone_stage_path(self, job_id: str) -> Path:
+        return ensure_directory(self.recording_root(job_id)) / "microphone_audio.pcm"
+
+    def mixed_recording_stage_path(self, job_id: str) -> Path:
+        return ensure_directory(self.recording_root(job_id)) / "recording.mixed.mp4"
+
+    def mix_recording_with_microphone(self, job_id: str) -> Path:
+        recording_path = self.recording_stage_path(job_id)
+        microphone_path = self.microphone_stage_path(job_id)
+        mixed_path = self.mixed_recording_stage_path(job_id)
+        if not recording_path.exists():
+            raise FileNotFoundError(f"recording stage file is missing: {recording_path}")
+        if not microphone_path.exists() or microphone_path.stat().st_size == 0:
+            raise FileNotFoundError(f"processed microphone stage file is missing: {microphone_path}")
+
+        ffmpeg = os.environ.get("FFMPEG_BIN", "ffmpeg")
+        has_audio = self._recording_has_audio(recording_path)
+        if mixed_path.exists():
+            mixed_path.unlink()
+        command = self._mix_command(ffmpeg, recording_path, microphone_path, mixed_path, has_audio=has_audio)
+        result = self._run_media_command(command)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "ffmpeg failed to mix processed microphone audio").strip()
+            raise RuntimeError(f"failed to mix processed microphone audio: {detail}")
+        if not mixed_path.exists():
+            raise RuntimeError("failed to mix processed microphone audio: mixed recording was not created")
+        shutil.move(str(mixed_path), str(recording_path))
+        return recording_path
+
+    def _recording_has_audio(self, recording_path: Path) -> bool:
+        ffprobe = os.environ.get("FFPROBE_BIN", "ffprobe")
+        command = [
+            ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            str(recording_path),
+        ]
+        result = self._run_media_command(command)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "ffprobe could not inspect the recording").strip()
+            raise RuntimeError(f"failed to inspect recording audio streams: {detail}")
+        return bool(result.stdout.strip())
+
+    @staticmethod
+    def _run_media_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=MEDIA_COMMAND_TIMEOUT_SECONDS,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"{command[0]} is unavailable; configure FFMPEG_BIN and FFPROBE_BIN") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"{command[0]} timed out after {MEDIA_COMMAND_TIMEOUT_SECONDS}s") from exc
+
+    @staticmethod
+    def _mix_command(ffmpeg: str, recording_path: Path, microphone_path: Path, mixed_path: Path, *, has_audio: bool) -> list[str]:
+        base = [
+            ffmpeg,
+            "-nostdin",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(recording_path),
+            "-f",
+            "s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-i",
+            str(microphone_path),
+        ]
+        if has_audio:
+            return [
+                *base,
+                "-filter_complex",
+                "[1:a]aresample=48000[mic];[0:a][mic]amix=inputs=2:duration=first:dropout_transition=0[aout]",
+                "-map",
+                "0:v:0",
+                "-map",
+                "[aout]",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(mixed_path),
+            ]
+        return [
+            *base,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(mixed_path),
+        ]
 
     def append_controller_event(self, job_id: str, event: dict[str, Any]) -> None:
         paths = self.job_paths(job_id)

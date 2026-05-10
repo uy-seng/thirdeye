@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete, select
@@ -430,8 +431,6 @@ class CaptureRuntime:
         backend = self._backend_for_job(job)
         recording_stage_path = self.artifacts.recording_stage_path(job.id).as_posix()
         record_screen = self._record_screen_enabled(job)
-        record_microphone = self._record_microphone_enabled(job)
-        echo_cancellation_enabled = self._echo_cancellation_enabled(job)
         mute_target_audio = self._mute_target_audio_enabled(job)
         self.jobs.transition_job(job.id, JobState.PENDING_START, "capture requested")
         recording_started = False
@@ -443,8 +442,8 @@ class CaptureRuntime:
                     recording_stage_path,
                     job.capture_target,
                     mute_target_audio,
-                    record_microphone,
-                    echo_cancellation_enabled,
+                    False,
+                    False,
                 )
                 recording_started = True
                 job = self.jobs.update_runtime_fields(
@@ -458,15 +457,13 @@ class CaptureRuntime:
                 job.id,
                 job.capture_target,
                 mute_target_audio,
-                record_microphone,
-                echo_cancellation_enabled,
+                False,
+                False,
             )
             live_audio_started = True
             job = self.jobs.update_runtime_fields(job.id, live_audio_pid=live_audio_response.get("pid"))
             self.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "live audio started")
             await self._start_deepgram_relay(job, backend, "system")
-            if record_microphone:
-                await self._start_deepgram_relay(job, backend, "microphone")
             job = self.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "deepgram relay started")
             await self.transcript_hub.publish(job.id, {"type": "status", "state": job.state})
             self._supervisor_tasks[job.id] = asyncio.create_task(self._supervise(job.id))
@@ -488,16 +485,12 @@ class CaptureRuntime:
         backend = self._backend_for_job(job)
         recording_stage_path = self.artifacts.recording_stage_path(job.id).as_posix()
         record_screen = self._record_screen_enabled(job)
-        if job.state in {
-            JobState.STOPPING.value,
-            JobState.FINALIZING_DEEPGRAM.value,
-            JobState.COMPILING_TRANSCRIPT.value,
-            JobState.SUMMARIZING.value,
-            JobState.RECOVERING.value,
-            JobState.COMPLETED.value,
-            JobState.FAILED.value,
-            JobState.CANCELED.value,
-        }:
+        state = JobState(job.state)
+        if state == JobState.FINALIZING_DEEPGRAM:
+            return await self._resume_finalization_after_recording_stop(job, record_screen=record_screen, skip_summary=skip_summary)
+        if state in {JobState.COMPILING_TRANSCRIPT, JobState.SUMMARIZING, JobState.RECOVERING}:
+            return await self.recover_capture(job_id)
+        if state in {JobState.STOPPING, JobState.COMPLETED, JobState.FAILED, JobState.CANCELED}:
             return job
         if job.state == JobState.RECORDING.value:
             self.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "normalizing stop path")
@@ -513,12 +506,8 @@ class CaptureRuntime:
             if record_screen:
                 await backend.stop_recording(job.id, recording_stage_path, job.capture_target)
                 recording_stopped = True
-                recording_path = self.artifacts.copy_recording(job.id)
-                recording_copied = True
-                self.jobs.update_runtime_fields(job.id, recording_path=recording_path)
-            else:
-                self.jobs.update_runtime_fields(job.id, recording_path=None)
-            job = self._compile_transcript(job.id)
+            job = await self._finalize_recording_and_transcript(job.id, record_screen=record_screen)
+            recording_copied = bool(job.recording_path) or not record_screen
         except Exception as exc:
             message = self._failure_message(exc)
             with contextlib.suppress(Exception):
@@ -531,7 +520,9 @@ class CaptureRuntime:
                     recording_stopped = True
             if record_screen and not recording_copied:
                 with contextlib.suppress(Exception):
-                    recording_path = self.artifacts.copy_recording(job.id)
+                    if self._record_microphone_enabled(job):
+                        await asyncio.to_thread(self.artifacts.mix_recording_with_microphone, job.id)
+                    recording_path = await asyncio.to_thread(self.artifacts.copy_recording, job.id)
                     recording_copied = True
                     self.jobs.update_runtime_fields(job.id, recording_path=recording_path)
             failed_job = self.jobs.fail_job(job.id, "capture stop failed", message)
@@ -551,6 +542,47 @@ class CaptureRuntime:
             else:
                 await self.transcript_hub.publish(job.id, {"type": "status", "state": job.state})
         return job
+
+    async def _resume_finalization_after_recording_stop(self, job: JobResponse, *, record_screen: bool, skip_summary: bool) -> JobResponse:
+        try:
+            job = await self._finalize_recording_and_transcript(job.id, record_screen=record_screen)
+            job = await self._finalize_post_stop(
+                job.id,
+                completion_reason="capture completed",
+                skip_summary=skip_summary or not self._summary_enabled(job),
+            )
+            self.artifacts.write_metadata(job)
+            with contextlib.suppress(Exception):
+                if job.state == JobState.COMPLETED.value:
+                    await self.transcript_hub.publish(job.id, {"type": "complete", "state": job.state})
+                else:
+                    await self.transcript_hub.publish(job.id, {"type": "status", "state": job.state})
+            return job
+        except Exception as exc:
+            message = self._failure_message(exc)
+            failed_job = self.jobs.fail_job(job.id, "capture stop failed", message)
+            with contextlib.suppress(Exception):
+                await self.transcript_hub.publish(job.id, {"type": "status", "state": failed_job.state, "error": message})
+            raise CaptureStopError(message) from exc
+
+    async def _finalize_recording_and_transcript(self, job_id: str, *, record_screen: bool) -> JobResponse:
+        job = self.jobs.get_job(job_id)
+        if record_screen:
+            if not self._recording_artifact_available(job):
+                if self._record_microphone_enabled(job):
+                    await asyncio.to_thread(self.artifacts.mix_recording_with_microphone, job.id)
+                recording_path = await asyncio.to_thread(self.artifacts.copy_recording, job.id)
+                job = self.jobs.update_runtime_fields(job.id, recording_path=recording_path)
+        else:
+            job = self.jobs.update_runtime_fields(job.id, recording_path=None)
+        if self._needs_transcript_compile(job):
+            job = self._compile_transcript(job.id)
+        return job
+
+    def _recording_artifact_available(self, job: JobResponse) -> bool:
+        if job.recording_path and Path(job.recording_path).exists():
+            return True
+        return self.artifacts.job_paths(job.id).recording.exists()
 
     async def set_target_audio_muted(self, job_id: str, mute_target_audio: bool) -> JobResponse:
         job = self.jobs.get_job(job_id)
@@ -583,27 +615,12 @@ class CaptureRuntime:
             raise CaptureMicrophoneUnsupportedError("runtime microphone recording is only available for This Mac capture")
         if job.state not in {JobState.RECORDING.value, JobState.LIVE_STREAMING.value}:
             raise CaptureMicrophoneStateError("capture must be recording before changing microphone")
-        if record_microphone and self._mute_target_audio_enabled(job):
-            raise CaptureMicrophoneUnsupportedError("turn off muted app audio before recording microphone")
         requested_echo_cancellation = False if not record_microphone else (True if echo_cancellation_enabled is None else echo_cancellation_enabled)
         if self._record_microphone_enabled(job) == record_microphone and self._echo_cancellation_enabled(job) == requested_echo_cancellation:
             return job
 
-        backend = self._backend_for_job(job)
-        try:
-            await backend.set_record_microphone_enabled(job.id, job.capture_target, record_microphone)
-            if self._echo_cancellation_enabled(job) != requested_echo_cancellation:
-                await backend.set_echo_cancellation_enabled(job.id, job.capture_target, requested_echo_cancellation)
-        except Exception as exc:
-            raise CaptureMicrophoneError(self._failure_message(exc)) from exc
-
         updated = self._update_session_preference(job, "record_microphone", record_microphone)
         updated = self._update_session_preference(updated, "echo_cancellation_enabled", requested_echo_cancellation)
-        if record_microphone:
-            if not self.relay_manager.is_running(job_id, source="microphone"):
-                await self._start_deepgram_relay(updated, backend, "microphone")
-        else:
-            await self.relay_manager.stop(job_id, source="microphone")
         with contextlib.suppress(Exception):
             await self.transcript_hub.publish(
                 job.id,
@@ -627,12 +644,6 @@ class CaptureRuntime:
         if self._echo_cancellation_enabled(job) == echo_cancellation_enabled:
             return job
 
-        backend = self._backend_for_job(job)
-        try:
-            await backend.set_echo_cancellation_enabled(job.id, job.capture_target, echo_cancellation_enabled)
-        except Exception as exc:
-            raise CaptureEchoCancellationError(self._failure_message(exc)) from exc
-
         updated = self._update_session_preference(job, "echo_cancellation_enabled", echo_cancellation_enabled)
         with contextlib.suppress(Exception):
             await self.transcript_hub.publish(
@@ -646,8 +657,6 @@ class CaptureRuntime:
         backend = self._backend_for_job(job)
         if not self.relay_manager.is_running(job_id, source="system"):
             await self._start_deepgram_relay(job, backend, "system")
-        if self._record_microphone_enabled(job) and not self.relay_manager.is_running(job_id, source="microphone"):
-            await self._start_deepgram_relay(job, backend, "microphone")
 
     async def dispatch_stop_capture(self, job_id: str, *, skip_summary: bool = False) -> JobResponse:
         self.jobs.get_job(job_id)

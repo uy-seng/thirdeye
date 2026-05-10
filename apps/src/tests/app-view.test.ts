@@ -188,7 +188,7 @@ test("summary prompts are read from root prompt files", () => {
 });
 
 test("newly created captures are selected and loaded before opening the live view", () => {
-  const handlerStart = appSource.indexOf("async function handleCaptureCreated(job: JobResponse)");
+  const handlerStart = appSource.indexOf("async function handleCaptureCreated(job: JobResponse, microphoneStream: MediaStream | null = null)");
   const handlerEnd = appSource.indexOf("async function handleStopJob", handlerStart);
   const handlerSource = appSource.slice(handlerStart, handlerEnd);
 
@@ -202,7 +202,7 @@ test("newly created captures are selected and loaded before opening the live vie
 
 test("start capture allows parallel desktops but blocks unavailable targets", () => {
   assert.match(captureSource, /activeCaptures\?: JobResponse\[\]/);
-  assert.match(appSource, /<StartCapturePanel[\s\S]*?activeCaptures=\{activeJobs\}[\s\S]*?onCreated=\{\(job\) => void handleCaptureCreated\(job\)\}/);
+  assert.match(appSource, /<StartCapturePanel[\s\S]*?activeCaptures=\{activeJobs\}[\s\S]*?onCreated=\{handleCaptureCreated\}/);
   assert.match(captureSource, /const selectedTargetUnavailable = selectedTarget\?\.available === false;/);
   assert.match(captureSource, /const macCaptureBlocked =\s*backend === "macos_local" && activeCaptures\.some\(\(job\) => job\.capture_backend === "macos_local"\);/);
   assert.doesNotMatch(captureSource, /Stop the current session before starting a new one\./);
@@ -266,7 +266,10 @@ test("app runtime refresh only refreshes local service status", () => {
 
 test("app-managed services reject stale controller APIs without desktop routes", () => {
   assert.match(tauriSource, /fn controller_api_supports_desktops\(\) -> bool/);
+  assert.match(tauriSource, /fn controller_api_supports_processed_microphone\(\) -> bool/);
   assert.match(tauriSource, /local_http_status\(CONTROLLER_API_PORT, "\/api\/desktops", Duration::from_secs\(2\)\)/);
+  assert.match(tauriSource, /local_http_get\(CONTROLLER_API_PORT, "\/api\/health", Duration::from_secs\(2\)\)/);
+  assert.match(tauriSource, /processed_capture_microphone/);
   assert.match(tauriSource, /DESKTOP_SESSIONS_ROOT=\{\}/);
   assert.match(tauriSource, /DESKTOP_SESSIONS_REGISTRY_PATH=\{\}/);
 
@@ -275,8 +278,10 @@ test("app-managed services reject stale controller APIs without desktop routes",
   const controllerReconcile = tauriSource.slice(controllerReconcileStart, nextFunctionStart);
 
   assert.match(controllerReconcile, /port_open && !controller_api_supports_desktops\(\)/);
+  assert.match(controllerReconcile, /port_open && !controller_api_supports_processed_microphone\(\)/);
   assert.match(controllerReconcile, /stop_child_service\(\s*runtime_root,\s*"controller-api",\s*&mut children\.controller_api,?\s*\)\?/);
   assert.match(controllerReconcile, /does not support isolated desktops/);
+  assert.match(controllerReconcile, /does not support processed microphone capture/);
 });
 
 test("app-owned macOS capture agent is not restarted just because screen access is blocked", () => {
@@ -316,14 +321,16 @@ test("start session exposes recording and summary options", () => {
   assert.match(captureSource, /const \[echoCancellation, setEchoCancellation\] = useState\(true\);/);
   assert.match(captureSource, /Record microphone/);
   assert.match(captureSource, /Use your microphone without changing other apps\./);
-  assert.match(captureSource, /record_microphone: canRecordMicrophone \? recordMicrophone : false/);
   assert.match(captureSource, /Reduce speaker echo/);
   assert.match(captureSource, /Keeps session audio playing while cleaning your microphone\./);
-  assert.match(captureSource, /echo_cancellation_enabled:/);
+  assert.match(captureSource, /requestProcessedMicrophoneStream/);
+  assert.match(captureSource, /const shouldRecordMicrophone = canRecordMicrophone \? recordMicrophone : false/);
+  assert.match(captureSource, /record_microphone: shouldRecordMicrophone/);
+  assert.match(captureSource, /echo_cancellation_enabled: shouldRecordMicrophone \? echoCancellation : false/);
   assert.match(captureSource, /Mute this app for me/);
   assert.match(captureSource, /This mutes the selected app while capture runs\./);
   assert.doesNotMatch(captureSource, /Google Chrome/);
-  assert.match(captureSource, /mute_target_audio: canMuteTargetAudio && !recordMicrophone \? muteTargetAudio : false/);
+  assert.match(captureSource, /mute_target_audio: canMuteTargetAudio \? muteTargetAudio : false/);
   assert.match(captureSource, /notify_on_inactivity: notifyOnInactivity/);
   assert.match(captureSource, /Generate summary/);
   assert.match(captureSource, /record_screen: screenRecord/);
@@ -341,6 +348,8 @@ test("live view exposes a runtime app mute toggle for active captures", () => {
   assert.match(appSource, /setTargetAudioMuted/);
   assert.match(appSource, /setRecordMicrophoneEnabled/);
   assert.match(appSource, /setEchoCancellationEnabled/);
+  assert.match(appSource, /startCaptureMicrophone/);
+  assert.match(appSource, /captureMicrophoneLiveUrl/);
   assert.match(appSource, /const \[mutingJobId, setMutingJobId\] = useState<string \| null>\(null\);/);
   assert.match(appSource, /const \[microphoneJobId, setMicrophoneJobId\] = useState<string \| null>\(null\);/);
   assert.match(appSource, /const \[echoCancellationJobId, setEchoCancellationJobId\] = useState<string \| null>\(null\);/);
@@ -379,10 +388,7 @@ test("voice notes are available as a separate recording workspace", () => {
   assert.match(navigationSource, /view: "voice-notes"/);
   assert.match(appSource, /visibleView === "voice-notes"/);
   assert.match(appSource, /<VoiceNotesPanel \/>/);
-  assert.match(voiceNotesSource, /navigator\.mediaDevices\.getUserMedia\(voiceNoteAudioConstraints\)/);
-  assert.match(voiceNotesSource, /echoCancellation: false/);
-  assert.match(voiceNotesSource, /noiseSuppression: false/);
-  assert.match(voiceNotesSource, /autoGainControl: true/);
+  assert.match(voiceNotesSource, /requestProcessedMicrophoneStream\(\)/);
   assert.match(voiceNotesSource, /new MediaRecorder\(stream\)/);
   assert.match(voiceNotesSource, /new WebSocket\(voiceNoteLiveUrl\(\)\)/);
   assert.match(voiceNotesSource, /encodeLinear16/);
@@ -442,7 +448,7 @@ test("active captures start a native silence monitor outside the live view", () 
   assert.match(stylesSource, /right: 24px/);
   assert.match(stylesSource, /\.silence-alert/);
   assert.match(appSource, /useSilenceNotification\(activeJobs,/);
-  assert.match(appSource, /async function handleCaptureCreated\(job: JobResponse\)/);
+  assert.match(appSource, /async function handleCaptureCreated\(job: JobResponse, microphoneStream: MediaStream \| null = null\)/);
   assert.match(notificationSource, /SILENCE_NOTIFICATION_TIMEOUT_MINUTES = 2/);
   assert.match(notificationSource, /SILENCE_NOTIFICATION_TIMEOUT_MS = SILENCE_NOTIFICATION_TIMEOUT_MINUTES \* MINUTE_MS/);
   assert.match(notificationSource, /EMPTY_TRANSCRIPT_NOTIFICATION_THRESHOLD = 3/);

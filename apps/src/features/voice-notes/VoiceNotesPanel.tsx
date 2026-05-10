@@ -21,6 +21,7 @@ import {
   isVoiceNoteTranscriptTextEvent,
   mergedTranscriptText,
   mergeTranscriptEvent,
+  requestProcessedMicrophoneStream,
 } from "../../lib/voice-note-audio";
 import {
   clearLegacyVoiceNotes,
@@ -44,14 +45,6 @@ const recorderIntervalMs = 250;
 const transcriptionTimeoutMs = 5_000;
 const microphoneSignalQuietAfterMs = 3_000;
 const microphoneSignalUpdateIntervalMs = 500;
-const voiceNoteAudioConstraints = {
-  audio: {
-    channelCount: 1,
-    echoCancellation: false,
-    noiseSuppression: false,
-    autoGainControl: true,
-  },
-} satisfies MediaStreamConstraints;
 
 function createId() {
   return globalThis.crypto?.randomUUID?.() ?? `voice-note-${Date.now()}`;
@@ -328,7 +321,7 @@ export function VoiceNotesPanel() {
       if (!microphoneAllowed) {
         throw new DOMException("Microphone permission was denied.", "NotAllowedError");
       }
-      const stream = await navigator.mediaDevices.getUserMedia(voiceNoteAudioConstraints);
+      const stream = await requestProcessedMicrophoneStream();
       const recorder = new MediaRecorder(stream);
 
       chunksRef.current = [];

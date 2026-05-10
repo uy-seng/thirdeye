@@ -25,6 +25,10 @@ export function voiceNoteLiveUrl() {
   return new URL("/ws/voice-notes/live", API_WS_BASE).toString();
 }
 
+export function captureMicrophoneLiveUrl(jobId: string) {
+  return new URL(`/ws/jobs/${jobId}/microphone`, API_WS_BASE).toString();
+}
+
 async function readPayload(response: Response) {
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {

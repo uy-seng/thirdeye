@@ -197,8 +197,6 @@ class JobCreate(BaseModel):
                 raise ValueError("echo_cancellation_enabled is only supported for This Mac capture")
         if self.record_microphone and self.capture_backend != "macos_local":
             raise ValueError("record_microphone is only supported for This Mac capture")
-        if self.record_microphone and self.mute_target_audio:
-            raise ValueError("record_microphone cannot be combined with mute_target_audio")
         if self.mute_target_audio:
             if self.capture_backend != "macos_local":
                 raise ValueError("mute_target_audio is only supported for This Mac capture")
