@@ -128,7 +128,7 @@ export function VoiceNotesPanel() {
   }, [liveTranscript]);
 
   useEffect(() => {
-    let cancelled = false;
+    let disposed = false;
 
     async function loadSavedNotes() {
       try {
@@ -137,11 +137,11 @@ export function VoiceNotesPanel() {
         if (legacyNotes.length > 0) {
           clearLegacyVoiceNotes();
         }
-        if (!cancelled) {
+        if (!disposed) {
           setNotes(savedNotes);
         }
       } catch {
-        if (!cancelled) {
+        if (!disposed) {
           setStatus("Could not load saved notes.");
         }
       }
@@ -149,7 +149,7 @@ export function VoiceNotesPanel() {
 
     void loadSavedNotes();
     return () => {
-      cancelled = true;
+      disposed = true;
     };
   }, []);
 

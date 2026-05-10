@@ -16,13 +16,6 @@ from core.settings import Settings
 from core.utils import ensure_directory, slugify, utcnow
 
 
-LOG_ROOT_ARTIFACT_NAMES = {
-    "controller-events.jsonl",
-    "deepgram-events.jsonl",
-    "metadata.json",
-    "transcript.json",
-    "transcript.txt",
-}
 MEDIA_COMMAND_TIMEOUT_SECONDS = 120
 
 
@@ -46,7 +39,6 @@ class ArtifactManager:
         ensure_directory(settings.artifacts_root)
         ensure_directory(settings.debug_logs_root)
         ensure_directory(settings.recordings_root)
-        ensure_directory(settings.controller_events_root)
 
     def job_root(self, job_id: str) -> Path:
         return self.settings.artifacts_root / "jobs" / job_id
@@ -60,7 +52,6 @@ class ArtifactManager:
     def job_paths(self, job_id: str) -> JobArtifactPaths:
         root = ensure_directory(self.job_root(job_id))
         logs_root = ensure_directory(self.job_logs_root(job_id))
-        self._migrate_legacy_log_files(job_id, root, logs_root)
         return JobArtifactPaths(
             root=root,
             logs_root=logs_root,
@@ -349,41 +340,6 @@ class ArtifactManager:
     @staticmethod
     def _is_internal_artifact_name(name: str) -> bool:
         return name in {"metadata.json", "transcript.txt"}
-
-    def _migrate_legacy_log_files(self, job_id: str, root: Path, logs_root: Path) -> None:
-        for name in LOG_ROOT_ARTIFACT_NAMES:
-            legacy_path = root / name
-            if not legacy_path.is_file():
-                continue
-
-            log_path = logs_root / name
-            if log_path.exists() and legacy_path.stat().st_mtime <= log_path.stat().st_mtime:
-                legacy_path.unlink()
-            else:
-                if log_path.exists():
-                    log_path.unlink()
-                shutil.move(str(legacy_path), str(log_path))
-
-            self._update_manifest_path(job_id, name, log_path)
-
-    def _update_manifest_path(self, job_id: str, name: str, path: Path) -> None:
-        if self.session_factory is None:
-            return
-        now = utcnow()
-        with self.session_factory() as session:
-            existing = session.execute(
-                select(ArtifactManifest).where(
-                    ArtifactManifest.job_id == job_id,
-                    ArtifactManifest.name == name,
-                )
-            ).scalar_one_or_none()
-            if existing is None:
-                return
-            existing.path = str(path)
-            existing.size_bytes = path.stat().st_size
-            existing.updated_at = now
-            session.add(existing)
-            session.commit()
 
     def cleanup_job(self, job_id: str) -> None:
         for root in (self.job_root(job_id), self.recording_root(job_id), self.job_logs_root(job_id)):

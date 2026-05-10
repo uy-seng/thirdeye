@@ -10,7 +10,7 @@ The macOS app starts local services on loopback addresses only:
 | --- | --- | --- |
 | Controller API | `127.0.0.1:8788` | Capture jobs, transcripts, summaries, artifacts, and recovery |
 | macOS capture agent | `127.0.0.1:8791` | Local screen, app, window, and audio capture targets |
-| Isolated desktop agent | `127.0.0.1:8790` | Optional Docker desktop control API |
+| Isolated desktop agents | Dynamic loopback ports | Optional on-demand Docker desktop capture sessions |
 | OpenClaw gateway | `127.0.0.1:18789` | Optional local gateway for summaries |
 
 These ports are intended to be reachable only from the same computer. Do not expose them to a public network or bind them to `0.0.0.0`.
@@ -39,9 +39,9 @@ The app itself is local-first, but some optional features use services you confi
 
 - Live transcription uses `DEEPGRAM_API_KEY` and sends the captured audio stream to Deepgram.
 - OpenClaw-backed summaries use your configured OpenClaw gateway.
-- The optional isolated desktop may access websites you open inside it.
+- Optional isolated desktops may access websites you open inside them.
 
-If you require a strict no-network workflow, do not configure external transcription or summary providers and do not start the optional Docker desktop.
+If you require a strict no-network workflow, do not configure external transcription or summary providers and do not create optional Docker desktops.
 
 ## macOS Permissions
 

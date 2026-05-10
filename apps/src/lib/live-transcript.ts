@@ -48,7 +48,7 @@ function appendTranscriptText(current: string, incoming: string) {
   return `${current} ${incoming}`;
 }
 
-function shouldMergeFinalBlock(previousBlock: TranscriptBlock | undefined, previousSpeaker: number | null | undefined, currentBlock: TranscriptBlock, currentSpeaker: number | null) {
+function shouldMergeFinalBlock(previousBlock: TranscriptBlock | undefined, previousSpeaker: number | null | undefined, currentSpeaker: number | null) {
   if (!previousBlock) {
     return false;
   }
@@ -132,7 +132,7 @@ export function buildTranscriptFeed(draft: string, blocks: TranscriptBlock[]): T
     const previousBlock = tailBlocks[tailBlocks.length - 1];
     const previousSpeakerKey = speakerKeys[speakerKeys.length - 1];
 
-    if (previous?.kind === "final" && shouldMergeFinalBlock(previousBlock, previousSpeakerKey, block, speakerKey)) {
+    if (previous?.kind === "final" && shouldMergeFinalBlock(previousBlock, previousSpeakerKey, speakerKey)) {
       previous.text = appendTranscriptText(previous.text, text);
 
       const current = currentTimestamp(block);

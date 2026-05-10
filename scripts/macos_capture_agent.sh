@@ -37,7 +37,7 @@ require_macos() {
 
 require_runtime() {
   if [[ ! -x "${PYTHON_BIN}" ]]; then
-    printf 'Missing virtualenv Python at %s. Run ./scripts/bootstrap.sh first.\n' "${PYTHON_BIN}" >&2
+    printf 'Missing virtualenv Python at %s. Run make setup first.\n' "${PYTHON_BIN}" >&2
     exit 1
   fi
   if [[ ! -x "${HELPER_BIN}" ]]; then

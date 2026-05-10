@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 import httpx
 
 from capture.desktop_sessions import DesktopSessionManager
-from jobs.models import CaptureTarget
+from capture_contracts.contracts import CaptureTarget
 from core.settings import Settings
 
 
@@ -23,7 +23,6 @@ class CaptureClientProtocol(Protocol):
         output_file: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]: ...
     async def stop_recording(self, job_id: str, output_file: str, target: dict[str, Any]) -> dict[str, Any]: ...
     async def start_live_audio(
@@ -31,32 +30,15 @@ class CaptureClientProtocol(Protocol):
         job_id: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]: ...
-    async def set_target_audio_muted(
-        self,
-        job_id: str,
-        target: dict[str, Any],
-        mute_target_audio: bool,
-    ) -> dict[str, Any]: ...
-    async def set_record_microphone_enabled(
-        self,
-        job_id: str,
-        target: dict[str, Any],
-        record_microphone: bool,
-    ) -> dict[str, Any]: ...
+    async def set_target_audio_muted(self, job_id: str, target: dict[str, Any], mute_target_audio: bool) -> dict[str, Any]: ...
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]: ...
     async def stream_live_audio(self, job_id: str, source: str = "system") -> AsyncIterator[bytes]: ...
-
-
-DesktopClientProtocol = CaptureClientProtocol
 
 
 class CaptureClientError(RuntimeError):
     pass
 
-
-DesktopClientError = CaptureClientError
 
 MACOS_LISTED_TARGET_KINDS = {"display", "application", "window"}
 
@@ -128,7 +110,6 @@ class HttpCaptureClient:
         output_file: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]:
         return await self._post(
             "/recording/start",
@@ -137,7 +118,6 @@ class HttpCaptureClient:
                 "output_file": output_file,
                 "target": target,
                 "mute_target_audio": mute_target_audio,
-                "record_microphone": record_microphone,
             },
         )
 
@@ -149,7 +129,6 @@ class HttpCaptureClient:
         job_id: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]:
         return await self._post(
             "/live-audio/start",
@@ -157,7 +136,6 @@ class HttpCaptureClient:
                 "job_id": job_id,
                 "target": target,
                 "mute_target_audio": mute_target_audio,
-                "record_microphone": record_microphone,
             },
         )
 
@@ -172,17 +150,6 @@ class HttpCaptureClient:
             {"job_id": job_id, "target": target, "mute_target_audio": mute_target_audio},
         )
 
-    async def set_record_microphone_enabled(
-        self,
-        job_id: str,
-        target: dict[str, Any],
-        record_microphone: bool,
-    ) -> dict[str, Any]:
-        return await self._post(
-            "/microphone/record",
-            {"job_id": job_id, "target": target, "record_microphone": record_microphone},
-        )
-
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         return await self._post("/live-audio/stop", {"job_id": job_id, "target": target})
 
@@ -193,12 +160,6 @@ class HttpCaptureClient:
                 response.raise_for_status()
                 async for chunk in response.aiter_bytes():
                     yield chunk
-
-
-class DesktopHttpClient(HttpCaptureClient):
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-        super().__init__(base_url=settings.desktop_base_url, backend_name="docker_desktop")
 
 
 class DesktopPoolHttpClient:
@@ -243,14 +204,12 @@ class DesktopPoolHttpClient:
         output_file: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]:
         return await self._client_for_target(target).start_recording(
             job_id,
             output_file,
             target,
             mute_target_audio,
-            record_microphone,
         )
 
     async def stop_recording(self, job_id: str, output_file: str, target: dict[str, Any]) -> dict[str, Any]:
@@ -261,13 +220,11 @@ class DesktopPoolHttpClient:
         job_id: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]:
         return await self._client_for_target(target).start_live_audio(
             job_id,
             target,
             mute_target_audio,
-            record_microphone,
         )
 
     async def set_target_audio_muted(
@@ -277,14 +234,6 @@ class DesktopPoolHttpClient:
         mute_target_audio: bool,
     ) -> dict[str, Any]:
         return await self._client_for_target(target).set_target_audio_muted(job_id, target, mute_target_audio)
-
-    async def set_record_microphone_enabled(
-        self,
-        job_id: str,
-        target: dict[str, Any],
-        record_microphone: bool,
-    ) -> dict[str, Any]:
-        return await self._client_for_target(target).set_record_microphone_enabled(job_id, target, record_microphone)
 
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         return await self._client_for_target(target).stop_live_audio(job_id, target)

@@ -144,7 +144,7 @@ export function formatStateLabel(state: string, metadata?: JobMetadataJson) {
 export function stateTone(state: string, metadata?: JobMetadataJson): "neutral" | "good" | "warn" | "bad" | "info" {
   if (state === "completed" && completedJobWarnings({ state, metadata_json: metadata ?? {} }).length > 0) return "warn";
   if (state === "completed") return "good";
-  if (state === "failed" || state === "canceled") return "bad";
+  if (state === "failed") return "bad";
   if (ACTIVE_STATES.has(state)) return "info";
   return "neutral";
 }

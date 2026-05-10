@@ -23,7 +23,17 @@ Only real local runtime routes are documented here. The API surface is the app-u
 - `POST /api/desktops`
 - `POST /api/desktops/{desktop_id}/destroy`
 - `GET /api/capture/targets?backend={docker_desktop|macos_local}`
+- `POST /api/jobs/{job_id}/mute-target-audio`
+- `POST /api/jobs/{job_id}/record-microphone`
+- `GET /api/voice-notes`
+- `POST /api/voice-notes`
+- `PATCH /api/voice-notes/{note_id}`
+- `POST /api/voice-notes/import`
+- `DELETE /api/voice-notes/{note_id}`
+- `POST /api/voice-notes/summary/generate`
 - `WS /ws/jobs/{job_id}/live`
+- `WS /ws/jobs/{job_id}/microphone`
+- `WS /ws/voice-notes/live`
 - `GET /api/health`
 - `GET /artifacts/{job_id}/{filename}`
 
@@ -37,5 +47,6 @@ Only real local runtime routes are documented here. The API surface is the app-u
 - `POST /live-audio/start`
 - `POST /live-audio/stop`
 - `GET /live-audio/stream`
+- `POST /target-audio/mute`
 
-Both capture services implement this contract through the shared `capture_contracts.agent` helpers.
+Both capture services implement this contract through the shared `capture_contracts.agent` helpers. The capture agent audio stream is system audio only; processed microphone audio is streamed to the controller over `WS /ws/jobs/{job_id}/microphone`.

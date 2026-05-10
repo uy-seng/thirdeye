@@ -207,7 +207,6 @@ def test_start_job_failure_marks_job_failed_and_allows_retry(client, monkeypatch
         job_id: str,
         target: dict[str, object],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, object]:
         raise httpx.ReadTimeout("timed out")
 
@@ -338,7 +337,6 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
         output_file: str,
         target: dict[str, object],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, object]:
         calls.append(("recording", mute_target_audio))
         return {"pid": 1111, "output_file": output_file}
@@ -347,7 +345,6 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
         job_id: str,
         target: dict[str, object],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, object]:
         calls.append(("live_audio", mute_target_audio))
         return {"pid": 2222}
@@ -379,25 +376,23 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
 def test_start_job_keeps_processed_microphone_out_of_capture_helper(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
     backend = runtime.capture.capture_backends.require("macos_local")
-    calls: list[tuple[str, bool, bool]] = []
+    calls: list[tuple[str, bool]] = []
 
     async def start_recording(
         job_id: str,
         output_file: str,
         target: dict[str, object],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, object]:
-        calls.append(("recording", mute_target_audio, record_microphone))
+        calls.append(("recording", mute_target_audio))
         return {"pid": 1111, "output_file": output_file}
 
     async def start_live_audio(
         job_id: str,
         target: dict[str, object],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, object]:
-        calls.append(("live_audio", mute_target_audio, record_microphone))
+        calls.append(("live_audio", mute_target_audio))
         return {"pid": 2222}
 
     monkeypatch.setattr(backend, "start_recording", start_recording)
@@ -419,7 +414,7 @@ def test_start_job_keeps_processed_microphone_out_of_capture_helper(client, monk
     )
 
     assert response.status_code == 200
-    assert calls == [("recording", False, False), ("live_audio", False, False)]
+    assert calls == [("recording", False), ("live_audio", False)]
     assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
 
 
@@ -621,18 +616,11 @@ def test_record_microphone_endpoint_updates_processed_microphone_preference_with
     runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
     runtime.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "test")
     runtime.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "test")
-    backend = runtime.capture_backends.require("macos_local")
-    calls: list[tuple[str, bool]] = []
     started_sources: list[str] = []
-
-    async def set_record_microphone_enabled(job_id: str, target: dict[str, object], record_microphone: bool) -> dict[str, object]:
-        calls.append((job_id, record_microphone))
-        return {"pid": 4321, "record_microphone": record_microphone}
 
     async def fake_start(job_id: str, stream_factory, job_options: dict[str, object], source: str = "system") -> None:
         started_sources.append(source)
 
-    monkeypatch.setattr(backend, "set_record_microphone_enabled", set_record_microphone_enabled)
     monkeypatch.setattr(runtime.capture.relay_manager, "start", fake_start)
 
     response = client.post(
@@ -641,7 +629,6 @@ def test_record_microphone_endpoint_updates_processed_microphone_preference_with
     )
 
     assert response.status_code == 200
-    assert calls == []
     assert started_sources == []
     assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
     assert "echo_cancellation_enabled" not in response.json()["metadata_json"]["session_preferences"]
@@ -667,24 +654,16 @@ def test_record_microphone_endpoint_disables_processed_microphone_without_backen
     runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
     runtime.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "test")
     runtime.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "test")
-    backend = runtime.capture_backends.require("macos_local")
-    calls: list[tuple[str, bool]] = []
     stopped_sources: list[str | None] = []
-
-    async def set_record_microphone_enabled(job_id: str, target: dict[str, object], record_microphone: bool) -> dict[str, object]:
-        calls.append((job_id, record_microphone))
-        return {"pid": 4321, "record_microphone": record_microphone}
 
     async def fake_stop(job_id: str, source: str | None = None) -> None:
         stopped_sources.append(source)
 
-    monkeypatch.setattr(backend, "set_record_microphone_enabled", set_record_microphone_enabled)
     monkeypatch.setattr(runtime.capture.relay_manager, "stop", fake_stop)
 
     response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": False})
 
     assert response.status_code == 200
-    assert calls == []
     assert stopped_sources == []
     assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is False
 
@@ -706,12 +685,6 @@ def test_record_microphone_endpoint_is_idempotent_when_state_already_matches(cli
     )
     runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
     runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
-    backend = runtime.capture_backends.require("macos_local")
-
-    async def unexpected_set_record_microphone_enabled(job_id: str, target: dict[str, object], record_microphone: bool) -> dict[str, object]:
-        raise AssertionError("matching microphone state should not call the capture helper")
-
-    monkeypatch.setattr(backend, "set_record_microphone_enabled", unexpected_set_record_microphone_enabled)
 
     response = client.post(
         f"/api/jobs/{job.id}/record-microphone",

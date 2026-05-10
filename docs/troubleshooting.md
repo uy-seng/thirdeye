@@ -11,13 +11,13 @@
 
 ## No audio monitor source
 
-- Run `services/desktop-agent/scripts/detect_audio_source.sh` inside the desktop container.
+- For an isolated desktop capture, run `services/desktop-agent/scripts/detect_audio_source.sh` inside the dynamic desktop container.
 - Set `PULSE_SOURCE_OVERRIDE` if the auto-detected source is wrong.
 
 ## Deepgram degraded mid-job
 
 - Recording continues.
-- For internal debugging, check `runtime/artifacts/jobs/{job_id}/metadata.json` and `runtime/logs/jobs/{job_id}/deepgram-events.jsonl`.
+- For internal debugging, check `runtime/logs/jobs/{job_id}/metadata.json` and `runtime/logs/jobs/{job_id}/deepgram-events.jsonl`.
 - Retry summary or notification after the recording stops.
 
 ## Controller restart during capture

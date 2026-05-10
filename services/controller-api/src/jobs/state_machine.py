@@ -16,7 +16,6 @@ class JobState(str, Enum):
     RECOVERING = "recovering"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELED = "canceled"
 
 
 class TransitionError(ValueError):
@@ -48,9 +47,9 @@ class JobStateMachine:
         self._allowed: dict[JobState, set[JobState]] = {
             JobState.IDLE: {JobState.PENDING_START},
             JobState.PENDING_START: {JobState.RECORDING, JobState.LIVE_STREAM_CONNECTING},
-            JobState.RECORDING: {JobState.LIVE_STREAM_CONNECTING, JobState.CANCELED},
-            JobState.LIVE_STREAM_CONNECTING: {JobState.LIVE_STREAMING, JobState.CANCELED},
-            JobState.LIVE_STREAMING: {JobState.STOPPING, JobState.CANCELED},
+            JobState.RECORDING: {JobState.LIVE_STREAM_CONNECTING},
+            JobState.LIVE_STREAM_CONNECTING: {JobState.LIVE_STREAMING},
+            JobState.LIVE_STREAMING: {JobState.STOPPING},
             JobState.STOPPING: {JobState.FINALIZING_DEEPGRAM},
             JobState.FINALIZING_DEEPGRAM: {JobState.COMPILING_TRANSCRIPT},
             JobState.COMPILING_TRANSCRIPT: {JobState.SUMMARIZING, JobState.COMPLETED},
@@ -58,7 +57,6 @@ class JobStateMachine:
             JobState.RECOVERING: {JobState.SUMMARIZING, JobState.COMPLETED},
             JobState.COMPLETED: {JobState.RECOVERING},
             JobState.FAILED: {JobState.RECOVERING},
-            JobState.CANCELED: set(),
         }
 
     def can_transition(self, current: JobState, target: JobState) -> bool:

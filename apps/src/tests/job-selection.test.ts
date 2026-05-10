@@ -13,8 +13,6 @@ function job(id: string, state = "completed"): JobResponse {
     started_at: null,
     stopped_at: null,
     state,
-    max_duration_minutes: 120,
-    auto_stop_enabled: true,
     silence_timeout_minutes: 10,
     recording_path: null,
     transcript_text_path: null,

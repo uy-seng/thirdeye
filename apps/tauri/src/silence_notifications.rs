@@ -28,8 +28,6 @@ pub(crate) struct SilenceNotificationMonitorPayload {
     title: String,
     timeout_ms: u64,
     elapsed_ms: Option<u64>,
-    alert: Option<SilenceAlertPayload>,
-    one_shot: Option<bool>,
 }
 
 #[derive(Clone, Default)]
@@ -48,8 +46,6 @@ struct SilenceNotificationJob {
     timeout: Duration,
     last_activity: Instant,
     generation: u64,
-    alert: Option<SilenceAlertPayload>,
-    one_shot: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -72,8 +68,6 @@ impl SilenceNotificationMonitorState {
         title: String,
         timeout: Duration,
         now: Instant,
-        alert: Option<SilenceAlertPayload>,
-        one_shot: bool,
     ) -> u64 {
         self.generation = self.generation.wrapping_add(1);
         self.active.insert(
@@ -83,8 +77,6 @@ impl SilenceNotificationMonitorState {
                 timeout,
                 last_activity: now,
                 generation: self.generation,
-                alert,
-                one_shot,
             },
         );
         self.generation
@@ -116,16 +108,8 @@ impl SilenceNotificationMonitorState {
             return SilenceNotificationMonitorAction::Continue;
         }
 
-        let payload = job
-            .alert
-            .clone()
-            .unwrap_or_else(|| silence_notification_payload(&job.title, job.timeout));
-        let one_shot = job.one_shot;
-        if one_shot {
-            self.active.remove(job_id);
-        } else {
-            job.last_activity = now;
-        }
+        let payload = silence_notification_payload(&job.title, job.timeout);
+        job.last_activity = now;
         SilenceNotificationMonitorAction::Notify(payload)
     }
 
@@ -164,13 +148,9 @@ pub(crate) fn start_silence_notification_monitor(
         title,
         timeout_ms,
         elapsed_ms,
-        alert,
-        one_shot,
     } = payload;
     let log_title = sanitize_log_value(&title);
     let elapsed_ms = elapsed_ms.unwrap_or(0);
-    let alert_override = alert.is_some();
-    let one_shot = one_shot.unwrap_or(false);
     let timeout = Duration::from_millis(timeout_ms.max(1_000));
     let worker_job_id = job_id.clone();
     let state = monitor.state.clone();
@@ -181,17 +161,15 @@ pub(crate) fn start_silence_notification_monitor(
         let now = Instant::now();
         let elapsed = Duration::from_millis(elapsed_ms);
         let last_activity = now.checked_sub(elapsed).unwrap_or(now);
-        guard.start_job(job_id, title, timeout, last_activity, alert, one_shot)
+        guard.start_job(job_id, title, timeout, last_activity)
     };
     log_silence_notification_event(&format!(
-        "silence-monitor start job_id={} generation={} title=\"{}\" timeout_ms={} elapsed_ms={} one_shot={} alert_override={}",
+        "silence-monitor start job_id={} generation={} title=\"{}\" timeout_ms={} elapsed_ms={}",
         worker_job_id,
         generation,
         log_title,
         timeout.as_millis(),
-        elapsed_ms,
-        one_shot,
-        alert_override
+        elapsed_ms
     ));
     std::thread::spawn(move || {
         run_silence_notification_monitor(app, state, worker_job_id, generation)
@@ -419,8 +397,6 @@ mod tests {
             "Authorized session".to_string(),
             Duration::from_secs(120),
             started_at,
-            None,
-            false,
         );
 
         assert!(matches!(
@@ -449,8 +425,6 @@ mod tests {
             "Authorized session".to_string(),
             Duration::from_secs(120),
             started_at,
-            None,
-            false,
         );
 
         state.record_activity("job-1", started_at + Duration::from_secs(90));
@@ -474,8 +448,6 @@ mod tests {
             "Authorized session".to_string(),
             Duration::from_secs(120),
             now - Duration::from_secs(121),
-            None,
-            false,
         );
 
         assert!(matches!(
@@ -493,19 +465,12 @@ mod tests {
             "Authorized session".to_string(),
             Duration::from_secs(120),
             started_at,
-            None,
-            false,
         );
-        let test_generation = state.start_job(
-            "test-alert".to_string(),
-            "Test alert".to_string(),
+        let short_generation = state.start_job(
+            "job-2".to_string(),
+            "Short session".to_string(),
             Duration::from_secs(15),
             started_at,
-            Some(SilenceAlertPayload {
-                title: "Test silence alert".to_string(),
-                body: "This is a 15-second test using the same silence alert timer.".to_string(),
-            }),
-            true,
         );
 
         assert!(matches!(
@@ -517,26 +482,26 @@ mod tests {
             SilenceNotificationMonitorAction::Continue
         ));
         match state.next_action(
-            "test-alert",
-            test_generation,
+            "job-2",
+            short_generation,
             started_at + Duration::from_secs(15),
         ) {
             SilenceNotificationMonitorAction::Notify(payload) => {
-                assert_eq!(payload.title, "Test silence alert");
+                assert_eq!(payload.title, "No speech detected");
                 assert_eq!(
                     payload.body,
-                    "This is a 15-second test using the same silence alert timer."
+                    "No new transcript has appeared for 1 minute in Short session."
                 );
             }
             action => panic!("expected notification action, got {action:?}"),
         }
         assert!(matches!(
             state.next_action(
-                "test-alert",
-                test_generation,
+                "job-2",
+                short_generation,
                 started_at + Duration::from_secs(16)
             ),
-            SilenceNotificationMonitorAction::Stop
+            SilenceNotificationMonitorAction::Continue
         ));
         assert!(matches!(
             state.next_action(
@@ -557,16 +522,12 @@ mod tests {
             "Authorized session".to_string(),
             Duration::from_secs(120),
             started_at,
-            None,
-            false,
         );
         let _new_generation = state.start_job(
             "job-1".to_string(),
             "Authorized session".to_string(),
             Duration::from_secs(120),
             started_at,
-            None,
-            false,
         );
 
         assert!(matches!(

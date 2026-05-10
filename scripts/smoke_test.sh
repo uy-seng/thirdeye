@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
-  printf 'Missing .env. Run ./scripts/bootstrap.sh first.\n' >&2
+  printf 'Missing .env. Run make setup first.\n' >&2
   exit 1
 fi
 

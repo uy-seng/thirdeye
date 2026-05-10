@@ -532,7 +532,6 @@ fn controller_api_command(repo_root: &Path, runtime_root: &Path) -> String {
          ARTIFACTS_ROOT={} \
          DEBUG_LOGS_ROOT={} \
          RECORDINGS_ROOT={} \
-         CONTROLLER_EVENTS_ROOT={} \
          DESKTOP_SESSIONS_ROOT={} \
          DESKTOP_SESSIONS_REGISTRY_PATH={} \
          MACOS_CAPTURE_BASE_URL=http://127.0.0.1:{MACOS_CAPTURE_PORT} \
@@ -543,7 +542,6 @@ fn controller_api_command(repo_root: &Path, runtime_root: &Path) -> String {
         shell_escape(&runtime_root.join("artifacts")),
         shell_escape(&runtime_root.join("logs")),
         shell_escape(&runtime_root.join("recordings")),
-        shell_escape(&runtime_root.join("controller-events")),
         shell_escape(&runtime_root.join("desktop-sessions")),
         shell_escape(&runtime_root.join("desktop-sessions").join("sessions.json")),
         shell_escape(&python_bin(repo_root)),

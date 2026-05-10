@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
-from capture.desktop_exec import DesktopHttpClient
+from capture.desktop_exec import HttpCaptureClient, MacOSCaptureHttpClient
 
 
 def test_start_recording_forwards_controller_local_output_path(settings, monkeypatch) -> None:
-    client = DesktopHttpClient(settings)
+    client = HttpCaptureClient(base_url="http://agent.test", backend_name="docker_desktop:test")
     captured: dict[str, object] = {}
 
     async def fake_post(path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
@@ -31,13 +31,12 @@ def test_start_recording_forwards_controller_local_output_path(settings, monkeyp
             "output_file": "/data/recordings/jobs/job-123/recording.mp4",
             "target": {"id": "desktop", "kind": "desktop", "label": "Isolated desktop"},
             "mute_target_audio": False,
-            "record_microphone": False,
         },
     }
 
 
 def test_start_recording_forwards_muted_target_audio_request(settings, monkeypatch) -> None:
-    client = DesktopHttpClient(settings)
+    client = HttpCaptureClient(base_url="http://agent.test", backend_name="docker_desktop:test")
     captured: dict[str, object] = {}
 
     async def fake_post(path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
@@ -61,73 +60,10 @@ def test_start_recording_forwards_muted_target_audio_request(settings, monkeypat
         "output_file": "/data/recordings/jobs/job-123/recording.mp4",
         "target": {"id": "application:chrome", "kind": "application", "label": "Google Chrome", "app_pid": 4242},
         "mute_target_audio": True,
-        "record_microphone": False,
-    }
-
-
-def test_start_recording_forwards_microphone_request(settings, monkeypatch) -> None:
-    from capture.desktop_exec import MacOSCaptureHttpClient
-
-    client = MacOSCaptureHttpClient(settings)
-    captured: dict[str, object] = {}
-
-    async def fake_post(path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
-        captured["path"] = path
-        captured["payload"] = payload or {}
-        return {"pid": 1234}
-
-    monkeypatch.setattr(client, "_post", fake_post)
-
-    asyncio.run(
-        client.start_recording(
-            "job-123",
-            "/data/recordings/jobs/job-123/recording.mp4",
-            {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
-            record_microphone=True,
-        )
-    )
-
-    assert captured["payload"] == {
-        "job_id": "job-123",
-        "output_file": "/data/recordings/jobs/job-123/recording.mp4",
-        "target": {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
-        "mute_target_audio": False,
-        "record_microphone": True,
-    }
-
-
-def test_start_live_audio_forwards_microphone_request(settings, monkeypatch) -> None:
-    from capture.desktop_exec import MacOSCaptureHttpClient
-
-    client = MacOSCaptureHttpClient(settings)
-    captured: dict[str, object] = {}
-
-    async def fake_post(path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
-        captured["path"] = path
-        captured["payload"] = payload or {}
-        return {"pid": 5678}
-
-    monkeypatch.setattr(client, "_post", fake_post)
-
-    asyncio.run(
-        client.start_live_audio(
-            "job-123",
-            {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
-            record_microphone=True,
-        )
-    )
-
-    assert captured["payload"] == {
-        "job_id": "job-123",
-        "target": {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
-        "mute_target_audio": False,
-        "record_microphone": True,
     }
 
 
 def test_set_target_audio_muted_posts_runtime_mute_request(settings, monkeypatch) -> None:
-    from capture.desktop_exec import MacOSCaptureHttpClient
-
     client = MacOSCaptureHttpClient(settings)
     captured: dict[str, object] = {}
 
@@ -157,41 +93,7 @@ def test_set_target_audio_muted_posts_runtime_mute_request(settings, monkeypatch
     }
 
 
-def test_set_record_microphone_enabled_posts_runtime_microphone_request(settings, monkeypatch) -> None:
-    from capture.desktop_exec import MacOSCaptureHttpClient
-
-    client = MacOSCaptureHttpClient(settings)
-    captured: dict[str, object] = {}
-
-    async def fake_post(path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
-        captured["path"] = path
-        captured["payload"] = payload or {}
-        return {"pid": 4321, "record_microphone": True}
-
-    monkeypatch.setattr(client, "_post", fake_post)
-
-    payload = asyncio.run(
-        client.set_record_microphone_enabled(
-            "job-123",
-            {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
-            True,
-        )
-    )
-
-    assert payload == {"pid": 4321, "record_microphone": True}
-    assert captured == {
-        "path": "/microphone/record",
-        "payload": {
-            "job_id": "job-123",
-            "target": {"id": "display:main", "kind": "display", "label": "Built-in Display", "display_id": "main"},
-            "record_microphone": True,
-        },
-    }
-
-
-def test_stream_live_audio_can_request_microphone_source(settings, monkeypatch) -> None:
-    from capture.desktop_exec import MacOSCaptureHttpClient
-
+def test_stream_live_audio_reads_system_audio_stream(settings, monkeypatch) -> None:
     client = MacOSCaptureHttpClient(settings)
     requested: dict[str, str] = {}
 
@@ -200,7 +102,7 @@ def test_stream_live_audio_can_request_microphone_source(settings, monkeypatch) 
             return None
 
         async def aiter_bytes(self):
-            yield b"mic"
+            yield b"system"
 
     class FakeStream:
         async def __aenter__(self):
@@ -226,10 +128,10 @@ def test_stream_live_audio_can_request_microphone_source(settings, monkeypatch) 
 
     monkeypatch.setattr("capture.desktop_exec.httpx.AsyncClient", FakeClient)
 
-    chunks = asyncio.run(_collect_async(client.stream_live_audio("job-123", source="microphone")))
+    chunks = asyncio.run(_collect_async(client.stream_live_audio("job-123")))
 
-    assert chunks == [b"mic"]
-    assert requested == {"method": "GET", "path": "/live-audio/stream?job_id=job-123&source=microphone"}
+    assert chunks == [b"system"]
+    assert requested == {"method": "GET", "path": "/live-audio/stream?job_id=job-123&source=system"}
 
 
 async def _collect_async(iterator):
@@ -237,7 +139,7 @@ async def _collect_async(iterator):
 
 
 def test_stop_recording_forwards_controller_local_output_path(settings, monkeypatch) -> None:
-    client = DesktopHttpClient(settings)
+    client = HttpCaptureClient(base_url="http://agent.test", backend_name="docker_desktop:test")
     captured: dict[str, object] = {}
 
     async def fake_post(path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
@@ -266,7 +168,7 @@ def test_stop_recording_forwards_controller_local_output_path(settings, monkeypa
 
 
 def test_targets_endpoint_reads_available_targets(settings, monkeypatch) -> None:
-    client = DesktopHttpClient(settings)
+    client = HttpCaptureClient(base_url="http://agent.test", backend_name="docker_desktop:test")
     captured: dict[str, object] = {}
 
     async def fake_get(path: str) -> dict[str, object]:
@@ -301,8 +203,6 @@ def test_targets_endpoint_reads_available_targets(settings, monkeypatch) -> None
 
 
 def test_macos_targets_include_applications_for_muted_audio_selection(settings, monkeypatch) -> None:
-    from capture.desktop_exec import MacOSCaptureHttpClient
-
     client = MacOSCaptureHttpClient(settings)
 
     async def fake_get(path: str) -> dict[str, object]:

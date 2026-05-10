@@ -2,18 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { CommandResult, ServiceStatus } from "./types";
 
-export type SilenceAlertPayload = {
-  title: string;
-  body: string;
-};
-
 export type SilenceNotificationMonitorPayload = {
   jobId: string;
   title: string;
   timeoutMs: number;
   elapsedMs?: number;
-  alert?: SilenceAlertPayload;
-  oneShot?: boolean;
 };
 
 export function startLocalServices() {

@@ -13,8 +13,13 @@ make macos-app-dev
 Command-line service development:
 
 ```bash
-make build
 make dev-api
+```
+
+Optional OpenClaw helper:
+
+```bash
+make up-openclaw
 ```
 
 ## Service Checks
@@ -41,7 +46,7 @@ make test-all
 ## Stop
 
 ```bash
-make down
+make services-stop
 ```
 
-The macOS app's Stop services button stops app-managed local services. On-demand desktops should be destroyed from the app.
+The macOS app's Stop services button stops app-managed local services. On-demand desktops should be destroyed from the app. Use `docker compose --profile openclaw -f infra/compose.yaml down` only when you need to stop the optional OpenClaw helper.

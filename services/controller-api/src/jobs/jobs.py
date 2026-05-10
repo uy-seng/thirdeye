@@ -88,8 +88,6 @@ class JobRepository:
                 started_at=None,
                 stopped_at=None,
                 state=JobState.IDLE.value,
-                max_duration_minutes=payload.max_duration_minutes or self.settings.max_duration_minutes,
-                auto_stop_enabled=self.settings.enable_auto_stop if payload.auto_stop_enabled is None else payload.auto_stop_enabled,
                 silence_timeout_minutes=payload.silence_timeout_minutes or self.settings.silence_timeout_minutes,
                 deepgram_model=payload.deepgram_model or self.settings.deepgram_model,
                 deepgram_language=payload.deepgram_language if payload.deepgram_language is not None else self.settings.deepgram_language,
@@ -426,7 +424,6 @@ class CaptureRuntime:
                     recording_stage_path,
                     job.capture_target,
                     mute_target_audio,
-                    False,
                 )
                 recording_started = True
                 job = self.jobs.update_runtime_fields(
@@ -440,7 +437,6 @@ class CaptureRuntime:
                 job.id,
                 job.capture_target,
                 mute_target_audio,
-                False,
             )
             live_audio_started = True
             job = self.jobs.update_runtime_fields(job.id, live_audio_pid=live_audio_response.get("pid"))
@@ -472,7 +468,7 @@ class CaptureRuntime:
             return await self._resume_finalization_after_recording_stop(job, record_screen=record_screen, skip_summary=skip_summary)
         if state in {JobState.COMPILING_TRANSCRIPT, JobState.SUMMARIZING, JobState.RECOVERING}:
             return await self.recover_capture(job_id)
-        if state in {JobState.STOPPING, JobState.COMPLETED, JobState.FAILED, JobState.CANCELED}:
+        if state in {JobState.STOPPING, JobState.COMPLETED, JobState.FAILED}:
             return job
         if job.state == JobState.RECORDING.value:
             self.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "normalizing stop path")

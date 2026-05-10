@@ -31,15 +31,6 @@ def test_macos_live_audio_fifo_writes_only_converted_frame_length() -> None:
     assert "count: Int(audioBuffer.mDataByteSize)" not in helper
 
 
-def test_macos_microphone_live_audio_uses_separate_fifo_from_system_audio() -> None:
-    helper = (ROOT / "services" / "macos-capture-agent" / "helper" / "ScreenCaptureKitHelper.swift").read_text(encoding="utf-8")
-
-    assert "microphoneAudioFileDescriptor" in helper
-    assert "writeMicrophoneAudioSample(sampleBuffer)" in helper
-    assert "try prepareFIFO(at: microphoneFifoPath)" in helper
-    assert "return !muteTargetAudio && !mode.recordMicrophone && hasAudioOutput(for: mode)" not in helper
-
-
 def test_macos_helper_uses_core_audio_tap_for_muted_app_capture() -> None:
     helper = (ROOT / "services" / "macos-capture-agent" / "helper" / "ScreenCaptureKitHelper.swift").read_text(encoding="utf-8")
     info_plist = (ROOT / "apps" / "tauri" / "Info.plist").read_text(encoding="utf-8")

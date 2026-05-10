@@ -13,7 +13,6 @@ const BUILD_REPO_ROOT: Option<&str> = option_env!("THIRDEYE_REPO_ROOT");
 pub(crate) fn ensure_runtime_dirs(runtime_root: &Path) -> Result<(), String> {
     for directory in [
         runtime_root.join("controller"),
-        runtime_root.join("controller-events"),
         runtime_root.join("artifacts"),
         runtime_root.join("recordings"),
         runtime_root.join("logs"),

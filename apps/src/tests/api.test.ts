@@ -5,7 +5,6 @@ import {
   API_BASE,
   apiJson,
   apiUrl,
-  artifactHref,
   captureMicrophoneLiveUrl,
   createDesktop,
   deleteVoiceNote,
@@ -34,11 +33,6 @@ test("captureMicrophoneLiveUrl points processed capture microphone audio at the 
   assert.equal(captureMicrophoneLiveUrl("job-123"), "ws://127.0.0.1:8788/ws/jobs/job-123/microphone");
 });
 
-test("artifactHref keeps absolute artifact links and expands local paths", () => {
-  assert.equal(artifactHref("http://127.0.0.1:8788/artifacts/job/summary.md"), "http://127.0.0.1:8788/artifacts/job/summary.md");
-  assert.equal(artifactHref("/artifacts/job/summary.md"), "http://127.0.0.1:8788/artifacts/job/summary.md");
-});
-
 test("controller requests do not attach local authentication state", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -55,7 +49,6 @@ test("controller requests do not attach local authentication state", async () =>
     assert.equal(headers.has("x-thirdeye-client"), false);
     assert.equal(headers.has("authorization"), false);
     assert.equal(calls[0]?.init?.credentials, undefined);
-    assert.equal(artifactHref("/artifacts/job/summary.md"), "http://127.0.0.1:8788/artifacts/job/summary.md");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -300,8 +293,6 @@ test("startCapture sends screen recording and summary preferences", async () => 
         started_at: null,
         stopped_at: null,
         state: "live_streaming",
-        max_duration_minutes: 30,
-        auto_stop_enabled: false,
         silence_timeout_minutes: 5,
         recording_path: null,
         transcript_text_path: null,
@@ -409,8 +400,6 @@ test("setTargetAudioMuted posts the runtime mute preference", async () => {
         started_at: "2026-04-23T00:00:01Z",
         stopped_at: null,
         state: "live_streaming",
-        max_duration_minutes: 30,
-        auto_stop_enabled: false,
         silence_timeout_minutes: 5,
         recording_path: null,
         transcript_text_path: null,
@@ -461,8 +450,6 @@ test("setRecordMicrophoneEnabled posts the runtime microphone preference", async
         started_at: "2026-04-23T00:00:01Z",
         stopped_at: null,
         state: "live_streaming",
-        max_duration_minutes: 30,
-        auto_stop_enabled: false,
         silence_timeout_minutes: 5,
         recording_path: null,
         transcript_text_path: null,

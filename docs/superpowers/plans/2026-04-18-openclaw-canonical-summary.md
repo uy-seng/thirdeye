@@ -1,6 +1,6 @@
 # OpenClaw Canonical Summary Implementation Plan
 
-> Archival note: this implementation plan records removed fake-summary and `FAKE_MODE` behavior. Current runtime docs describe real local services only; test doubles live under `tests/support` and are injected by tests.
+> Archival note: this implementation plan records removed fake-summary behavior. Current runtime docs describe real local services only; test doubles live under `tests/support` and are injected by tests.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -363,14 +363,14 @@ OPENCLAW_SUMMARY_TIMEOUT_SECONDS=60
 In `README.md`, replace the old settings note:
 
 ```md
-- `SUMMARY_PROVIDER=fake` and `FAKE_MODE=true` enable a local smoke path without real Deepgram or a real live session.
+- `SUMMARY_PROVIDER=fake` and the old fake runtime flag enable a local smoke path without real Deepgram or a real live session.
 ```
 
 with:
 
 ```md
 - Canonical summaries and transcript-prompt summaries use the OpenClaw gateway configured by `OPENCLAW_BASE_URL`, `OPENCLAW_GATEWAY_TOKEN`, and `OPENCLAW_SUMMARY_MODEL`.
-- `FAKE_MODE=true` still enables synthetic desktop and Deepgram helpers for local smoke testing, but it no longer produces fake summary content.
+- The old fake runtime flag still enables synthetic desktop and Deepgram helpers for local smoke testing, but it no longer produces fake summary content.
 ```
 
 - [ ] **Step 2: Run the regression suite for the touched behavior**

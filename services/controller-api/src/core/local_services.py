@@ -56,7 +56,6 @@ def discover_repo_root(start: Path | None = None) -> Path:
 def runtime_dirs(runtime_root: Path) -> list[Path]:
     return [
         runtime_root / "controller",
-        runtime_root / "controller-events",
         runtime_root / "artifacts",
         runtime_root / "recordings",
         runtime_root / "logs",
@@ -235,7 +234,6 @@ def controller_api_command(runtime_root: Path, repo_root: Path | None = None) ->
         f"ARTIFACTS_ROOT={shell_escape(selected_runtime_root / 'artifacts')} "
         f"DEBUG_LOGS_ROOT={shell_escape(selected_runtime_root / 'logs')} "
         f"RECORDINGS_ROOT={shell_escape(selected_runtime_root / 'recordings')} "
-        f"CONTROLLER_EVENTS_ROOT={shell_escape(selected_runtime_root / 'controller-events')} "
         f"DESKTOP_SESSIONS_ROOT={shell_escape(selected_runtime_root / 'desktop-sessions')} "
         f"DESKTOP_SESSIONS_REGISTRY_PATH={shell_escape(selected_runtime_root / 'desktop-sessions' / 'sessions.json')} "
         f"MACOS_CAPTURE_BASE_URL=http://127.0.0.1:{MACOS_CAPTURE_PORT} "

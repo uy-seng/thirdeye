@@ -1,6 +1,5 @@
 import type {
   ArtifactFile,
-  ArtifactListResponse,
   ArtifactsOverviewResponse,
   CaptureBackend,
   CaptureTarget,
@@ -124,10 +123,6 @@ export function getArtifactsOverview() {
   return apiJson<ArtifactsOverviewResponse>("/api/artifacts");
 }
 
-export function getJobArtifacts(jobId: string) {
-  return apiJson<ArtifactListResponse>(`/api/jobs/${jobId}/artifacts`);
-}
-
 export function generateTranscriptSummary(jobId: string, prompt: string) {
   return apiJson<TranscriptSummaryGenerateResponse>(`/api/jobs/${jobId}/transcript-summary/generate`, {
     method: "POST",
@@ -248,8 +243,4 @@ export function setRecordMicrophoneEnabled(jobId: string, recordMicrophone: bool
 
 export function deleteJob(jobId: string) {
   return apiJson<JobResponse>(`/api/jobs/${jobId}/delete`, { method: "POST" });
-}
-
-export function artifactHref(downloadUrl: string) {
-  return new URL(downloadUrl, API_BASE).toString();
 }

@@ -34,9 +34,8 @@ class StubRuntime:
         output_file: str | None,
         target: dict[str, object],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, object]:
-        self.calls.append(("recording:start", job_id, output_file, target, mute_target_audio, record_microphone))
+        self.calls.append(("recording:start", job_id, output_file, target, mute_target_audio))
         return {"pid": 4321, "output_file": output_file}
 
     async def start_live_audio(
@@ -44,9 +43,8 @@ class StubRuntime:
         job_id: str,
         target: dict[str, object],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, object]:
-        self.calls.append(("live-audio:start", job_id, target, mute_target_audio, record_microphone))
+        self.calls.append(("live-audio:start", job_id, target, mute_target_audio))
         if self.call_sink is not None:
             self.call_sink.append("runtime:start_live_audio")
         return {"pid": 6789, "fifo_path": "/tmp/live_audio.pcm"}
@@ -59,15 +57,6 @@ class StubRuntime:
     ) -> dict[str, object]:
         self.calls.append(("target-audio:mute", job_id, target, mute_target_audio))
         return {"pid": 6789, "mute_target_audio": mute_target_audio}
-
-    async def set_record_microphone_enabled(
-        self,
-        job_id: str,
-        target: dict[str, object],
-        record_microphone: bool,
-    ) -> dict[str, object]:
-        self.calls.append(("microphone:record", job_id, target, record_microphone))
-        return {"pid": 6789, "record_microphone": record_microphone}
 
 class StubFanout:
     def __init__(self, calls: list[object]) -> None:
@@ -153,7 +142,6 @@ def test_recording_start_forwards_target_to_runtime(monkeypatch) -> None:
                 "display_id": None,
             },
             False,
-            False,
         )
     ]
 
@@ -195,7 +183,6 @@ def test_live_audio_start_starts_runtime_before_fanout_reader(monkeypatch) -> No
                 "window_id": None,
                 "display_id": None,
             },
-            False,
             False,
         )
     ]
@@ -239,91 +226,6 @@ def test_recording_start_forwards_muted_app_audio_request(monkeypatch) -> None:
                 "window_id": None,
                 "display_id": None,
             },
-            True,
-            False,
-        )
-    ]
-
-
-def test_recording_start_forwards_microphone_request(monkeypatch) -> None:
-    runtime = StubRuntime()
-    monkeypatch.setattr(agent_main, "runtime", runtime)
-
-    with TestClient(agent_main.app) as client:
-        response = client.post(
-            "/recording/start",
-            json={
-                "job_id": "job-123",
-                "output_file": "/tmp/recording.mp4",
-                "record_microphone": True,
-                "target": {
-                    "id": "display:main",
-                    "kind": "display",
-                    "label": "Built-in Display",
-                    "display_id": "main",
-                },
-            },
-        )
-
-    assert response.status_code == 200
-    assert runtime.calls == [
-        (
-            "recording:start",
-            "job-123",
-            "/tmp/recording.mp4",
-            {
-                "id": "display:main",
-                "kind": "display",
-                "label": "Built-in Display",
-                "app_bundle_id": None,
-                "app_name": None,
-                "app_pid": None,
-                "window_id": None,
-                "display_id": "main",
-            },
-            False,
-            True,
-        )
-    ]
-
-
-def test_live_audio_start_forwards_microphone_request(monkeypatch) -> None:
-    calls: list[object] = []
-    runtime = StubRuntime(calls)
-    monkeypatch.setattr(agent_main, "runtime", runtime)
-    monkeypatch.setattr(agent_main, "fanout", StubFanout(calls))
-
-    with TestClient(agent_main.app) as client:
-        response = client.post(
-            "/live-audio/start",
-            json={
-                "job_id": "job-123",
-                "record_microphone": True,
-                "target": {
-                    "id": "display:main",
-                    "kind": "display",
-                    "label": "Built-in Display",
-                    "display_id": "main",
-                },
-            },
-        )
-
-    assert response.status_code == 200
-    assert runtime.calls == [
-        (
-            "live-audio:start",
-            "job-123",
-            {
-                "id": "display:main",
-                "kind": "display",
-                "label": "Built-in Display",
-                "app_bundle_id": None,
-                "app_name": None,
-                "app_pid": None,
-                "window_id": None,
-                "display_id": "main",
-            },
-            False,
             True,
         )
     ]
@@ -372,60 +274,16 @@ def test_target_audio_mute_endpoint_forwards_runtime_request(monkeypatch) -> Non
     ]
 
 
-def test_record_microphone_endpoint_forwards_runtime_request(monkeypatch) -> None:
-    runtime = StubRuntime()
-    monkeypatch.setattr(agent_main, "runtime", runtime)
-
-    with TestClient(agent_main.app) as client:
-        response = client.post(
-            "/microphone/record",
-            json={
-                "job_id": "job-123",
-                "record_microphone": True,
-                "target": {
-                    "id": "display:main",
-                    "kind": "display",
-                    "label": "Built-in Display",
-                    "display_id": "main",
-                },
-            },
-        )
-
-    assert response.status_code == 200
-    assert response.json() == {"pid": 6789, "record_microphone": True}
-    assert runtime.calls == [
-        (
-            "microphone:record",
-            "job-123",
-            {
-                "id": "display:main",
-                "kind": "display",
-                "label": "Built-in Display",
-                "app_bundle_id": None,
-                "app_name": None,
-                "app_pid": None,
-                "window_id": None,
-                "display_id": "main",
-            },
-            True,
-        )
-    ]
-
-
-
-def test_live_audio_stream_can_read_microphone_source(monkeypatch) -> None:
+def test_live_audio_stream_rejects_removed_microphone_source(monkeypatch) -> None:
     system_fanout = StreamingStubFanout(b"system")
-    microphone_fanout = StreamingStubFanout(b"mic")
     monkeypatch.setattr(agent_main, "fanout", system_fanout)
-    monkeypatch.setattr(agent_main, "microphone_fanout", microphone_fanout, raising=False)
 
     with TestClient(agent_main.app) as client:
         response = client.get("/live-audio/stream?job_id=job-123&source=microphone")
 
-    assert response.status_code == 200
-    assert response.content == b"mic"
+    assert response.status_code == 400
+    assert response.json() == {"detail": "audio source must be system"}
     assert system_fanout.ensure_calls == 0
-    assert microphone_fanout.ensure_calls == 1
 
 
 def test_audio_fanout_emits_silence_when_fifo_is_idle(tmp_path) -> None:

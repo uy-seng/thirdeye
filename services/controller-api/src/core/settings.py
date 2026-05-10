@@ -36,10 +36,8 @@ class Settings(BaseModel):
     artifacts_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "artifacts"
     debug_logs_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "logs"
     recordings_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "recordings"
-    controller_events_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller-events"
     desktop_sessions_root: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions"
     desktop_sessions_registry_path: Path = THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions" / "sessions.json"
-    desktop_base_url: str = "http://127.0.0.1:8790"
     desktop_image: str = "thirdeye-desktop:local"
     desktop_browser_port_start: int = 3000
     desktop_agent_port_start: int = 8790
@@ -59,13 +57,10 @@ class Settings(BaseModel):
     deepgram_vad_events: bool = True
     deepgram_endpointing_ms: int = 300
     deepgram_utterance_end_ms: int = 1000
-    max_duration_minutes: int = 60
     silence_timeout_minutes: int = 2
-    enable_auto_stop: bool = False
     controller_cors_origins: list[str] = Field(default_factory=list)
     log_level: str = "INFO"
     tz: str = "UTC"
-    recording_size_threshold_mb: int = Field(default=25)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -77,12 +72,10 @@ class Settings(BaseModel):
             artifacts_root=Path(env.get("ARTIFACTS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "artifacts"))),
             debug_logs_root=Path(env.get("DEBUG_LOGS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "logs"))),
             recordings_root=Path(env.get("RECORDINGS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "recordings"))),
-            controller_events_root=Path(env.get("CONTROLLER_EVENTS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "controller-events"))),
             desktop_sessions_root=Path(env.get("DESKTOP_SESSIONS_ROOT", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions"))),
             desktop_sessions_registry_path=Path(
                 env.get("DESKTOP_SESSIONS_REGISTRY_PATH", str(THIRDEYE_APPLICATION_SUPPORT_ROOT / "desktop-sessions" / "sessions.json"))
             ),
-            desktop_base_url=env.get("DESKTOP_BASE_URL", "http://127.0.0.1:8790"),
             desktop_image=env.get("DESKTOP_IMAGE", "thirdeye-desktop:local"),
             desktop_browser_port_start=int(env.get("DESKTOP_BROWSER_PORT_START", "3000")),
             desktop_agent_port_start=int(env.get("DESKTOP_AGENT_PORT_START", "8790")),
@@ -102,9 +95,7 @@ class Settings(BaseModel):
             deepgram_vad_events=env.get("DEEPGRAM_VAD_EVENTS", "true").lower() in {"1", "true", "yes", "on"},
             deepgram_endpointing_ms=int(env.get("DEEPGRAM_ENDPOINTING_MS", "300")),
             deepgram_utterance_end_ms=int(env.get("DEEPGRAM_UTTERANCE_END_MS", "1000")),
-            max_duration_minutes=int(env.get("MAX_DURATION_MINUTES", "60")),
             silence_timeout_minutes=int(env.get("SILENCE_TIMEOUT_MINUTES", "2")),
-            enable_auto_stop=env.get("ENABLE_AUTO_STOP", "false").lower() in {"1", "true", "yes", "on"},
             controller_cors_origins=[
                 origin.strip()
                 for origin in env.get("CONTROLLER_CORS_ORIGINS", "").split(",")
@@ -112,5 +103,4 @@ class Settings(BaseModel):
             ],
             log_level=env.get("LOG_LEVEL", "INFO"),
             tz=env.get("TZ", "UTC"),
-            recording_size_threshold_mb=int(env.get("RECORDING_SIZE_THRESHOLD_MB", "25")),
         )

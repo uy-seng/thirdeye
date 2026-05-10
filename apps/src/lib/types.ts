@@ -158,8 +158,6 @@ export type JobResponse = {
   started_at: string | null;
   stopped_at: string | null;
   state: string;
-  max_duration_minutes: number;
-  auto_stop_enabled: boolean;
   silence_timeout_minutes: number;
   recording_path: string | null;
   transcript_text_path: string | null;

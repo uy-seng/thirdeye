@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from capture.desktop_sessions import DesktopSession, DesktopSessionLimitError, DesktopSessionManager, DesktopSessionNotFoundError
+from capture_contracts.contracts import CaptureTarget, default_docker_capture_target
 from core.utils import isoformat, utcnow
-from jobs.models import CaptureTarget, default_docker_capture_target
 
 
 EventCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
@@ -109,7 +109,6 @@ class FakeCaptureClient:
         self._running_live_audio = False
         self._output_file: Path | None = None
         self._target_audio_muted = False
-        self._record_microphone = False
 
     async def health(self) -> dict[str, Any]:
         return {"status": "ok", "provider": "test-double"}
@@ -131,15 +130,12 @@ class FakeCaptureClient:
         output_file: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]:
         self._running_recording = True
         self._target_audio_muted = mute_target_audio
-        self._record_microphone = record_microphone
         self._output_file = Path(output_file)
         self._output_file.parent.mkdir(parents=True, exist_ok=True)
         suffix = ":muted" if mute_target_audio else ""
-        suffix += ":microphone" if record_microphone else ""
         self._output_file.write_bytes(f"test-mp4:{self.backend_name}:{target['id']}{suffix}".encode("utf-8"))
         return {"pid": self._recording_pid, "output_file": output_file}
 
@@ -154,11 +150,9 @@ class FakeCaptureClient:
         job_id: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]:
         self._running_live_audio = True
         self._target_audio_muted = mute_target_audio
-        self._record_microphone = record_microphone
         return {"pid": self._live_audio_pid, "fifo_path": str(self.settings.recordings_root / "jobs" / job_id / "live_audio.pcm")}
 
     async def set_target_audio_muted(
@@ -169,15 +163,6 @@ class FakeCaptureClient:
     ) -> dict[str, Any]:
         self._target_audio_muted = mute_target_audio
         return {"pid": self._recording_pid if self._running_recording else self._live_audio_pid, "mute_target_audio": mute_target_audio}
-
-    async def set_record_microphone_enabled(
-        self,
-        job_id: str,
-        target: dict[str, Any],
-        record_microphone: bool,
-    ) -> dict[str, Any]:
-        self._record_microphone = record_microphone
-        return {"pid": self._recording_pid if self._running_recording else self._live_audio_pid, "record_microphone": record_microphone}
 
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         self._running_live_audio = False
@@ -238,14 +223,12 @@ class FakeDesktopPoolClient:
         output_file: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]:
         return await self._client_for_target(target).start_recording(
             job_id,
             output_file,
             target,
             mute_target_audio,
-            record_microphone,
         )
 
     async def stop_recording(self, job_id: str, output_file: str, target: dict[str, Any]) -> dict[str, Any]:
@@ -256,13 +239,11 @@ class FakeDesktopPoolClient:
         job_id: str,
         target: dict[str, Any],
         mute_target_audio: bool = False,
-        record_microphone: bool = False,
     ) -> dict[str, Any]:
         return await self._client_for_target(target).start_live_audio(
             job_id,
             target,
             mute_target_audio,
-            record_microphone,
         )
 
     async def set_target_audio_muted(
@@ -272,14 +253,6 @@ class FakeDesktopPoolClient:
         mute_target_audio: bool,
     ) -> dict[str, Any]:
         return await self._client_for_target(target).set_target_audio_muted(job_id, target, mute_target_audio)
-
-    async def set_record_microphone_enabled(
-        self,
-        job_id: str,
-        target: dict[str, Any],
-        record_microphone: bool,
-    ) -> dict[str, Any]:
-        return await self._client_for_target(target).set_record_microphone_enabled(job_id, target, record_microphone)
 
     async def stop_live_audio(self, job_id: str, target: dict[str, Any]) -> dict[str, Any]:
         return await self._client_for_target(target).stop_live_audio(job_id, target)

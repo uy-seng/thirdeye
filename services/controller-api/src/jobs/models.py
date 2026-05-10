@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import Boolean, DateTime, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
+from capture_contracts.contracts import (
+    CaptureBackendName,
+    CaptureTarget,
+    CaptureTargetsResponse,
+    capture_selection_from_metadata,
+    resolve_capture_selection,
+)
 from db.db import Base
 from core.settings import OPENCLAW_SUMMARY_MODEL_DEFAULT
 from jobs.state_machine import JobState
@@ -23,8 +30,6 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     state: Mapped[str] = mapped_column(Text, nullable=False, default=JobState.IDLE.value)
-    max_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
-    auto_stop_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     silence_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     deepgram_model: Mapped[str] = mapped_column(Text, nullable=False, default="nova-3")
     deepgram_language: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -100,77 +105,11 @@ class VoiceNoteRow(Base):
     summary_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-CaptureBackendName = Literal["docker_desktop", "macos_local"]
-CaptureTargetKind = Literal["desktop", "display", "application", "window"]
-
-
-class CaptureTarget(BaseModel):
-    id: str
-    kind: CaptureTargetKind
-    label: str
-    app_bundle_id: str | None = None
-    app_name: str | None = None
-    app_pid: int | None = None
-    window_id: str | None = None
-    display_id: str | None = None
-
-
-class CaptureTargetsResponse(BaseModel):
-    backend: CaptureBackendName
-    targets: list[CaptureTarget]
-
-
-def default_docker_capture_target() -> CaptureTarget:
-    return CaptureTarget(
-        id="desktop",
-        kind="desktop",
-        label="Isolated desktop",
-    )
-
-
-def resolve_capture_selection(
-    backend: CaptureBackendName | str | None,
-    target: CaptureTarget | dict[str, Any] | None,
-) -> tuple[CaptureBackendName, CaptureTarget]:
-    selected_backend = (backend or "docker_desktop")
-    if selected_backend not in {"docker_desktop", "macos_local"}:
-        raise ValueError("unsupported capture backend")
-
-    if selected_backend == "docker_desktop":
-        selected_target = default_docker_capture_target() if target is None else CaptureTarget.model_validate(target)
-        if selected_target.kind != "desktop":
-            raise ValueError("docker_desktop only supports isolated desktop targets")
-        return "docker_desktop", _stored_capture_target(selected_target)
-
-    if target is None:
-        raise ValueError("capture_target is required for macos_local")
-    return "macos_local", _stored_capture_target(CaptureTarget.model_validate(target))
-
-
-def _stored_capture_target(target: CaptureTarget) -> CaptureTarget:
-    return target
-
-
-def capture_selection_from_metadata(metadata: dict[str, Any]) -> tuple[CaptureBackendName, dict[str, Any]]:
-    raw_capture = metadata.get("capture")
-    if not isinstance(raw_capture, dict):
-        default_target = default_docker_capture_target().model_dump()
-        return "docker_desktop", default_target
-
-    backend, target = resolve_capture_selection(
-        raw_capture.get("backend"),
-        raw_capture.get("target"),
-    )
-    return backend, target.model_dump()
-
-
 class JobCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str
     source_url: str | None = None
-    max_duration_minutes: int | None = None
-    auto_stop_enabled: bool | None = None
     silence_timeout_minutes: int | None = None
     deepgram_model: str | None = None
     deepgram_language: str | None = None
@@ -353,8 +292,6 @@ class JobResponse(BaseModel):
     started_at: str | None
     stopped_at: str | None
     state: str
-    max_duration_minutes: int
-    auto_stop_enabled: bool
     silence_timeout_minutes: int
     deepgram_model: str
     deepgram_language: str | None
@@ -387,8 +324,6 @@ class JobResponse(BaseModel):
             started_at=isoformat(job.started_at),
             stopped_at=isoformat(job.stopped_at),
             state=job.state,
-            max_duration_minutes=job.max_duration_minutes,
-            auto_stop_enabled=job.auto_stop_enabled,
             silence_timeout_minutes=job.silence_timeout_minutes,
             deepgram_model=job.deepgram_model,
             deepgram_language=job.deepgram_language,

@@ -1,6 +1,6 @@
 # OpenClaw Canonical Summary Design
 
-> Archival note: this April 2026 design records removed fake-summary and `FAKE_MODE` behavior. It is not the current runtime contract. Current public docs define real OpenClaw-backed summaries and test-only doubles under `tests/support`.
+> Archival note: this April 2026 design records removed fake-summary behavior. It is not the current runtime contract. Current public docs define real OpenClaw-backed summaries and test-only doubles under `tests/support`.
 
 **Date:** 2026-04-18
 
@@ -13,7 +13,7 @@ The codebase has two separate summary systems:
 1. `CaptureRuntime.stop_capture()` in `controller/app/jobs.py` calls `Summarizer.summarize()` to write the canonical `summary.md`.
 2. `TranscriptPromptService` in `controller/app/transcript_prompt_service.py` uses `OpenClawClient.generate_transcript_summary()` for transcript-prompt generation and for the `Re-run Summary` action.
 
-The legacy `Summarizer` still supports a fake branch and a separate HTTP configuration surface (`SUMMARY_PROVIDER`, `SUMMARY_BASE_URL`, `SUMMARY_API_KEY`, `SUMMARY_MODEL`). Separately, `OpenClawClient.generate_transcript_summary()` also returns fake output when `FAKE_MODE=true`.
+The legacy `Summarizer` still supports a fake branch and a separate HTTP configuration surface (`SUMMARY_PROVIDER`, `SUMMARY_BASE_URL`, `SUMMARY_API_KEY`, `SUMMARY_MODEL`). Separately, `OpenClawClient.generate_transcript_summary()` also returns fake output when the old fake runtime flag is enabled.
 
 This means the application can appear to support LLM summaries while still producing fake summary output in both the stop flow and OpenClaw client flow.
 
@@ -44,7 +44,7 @@ The stop flow will continue to treat summary failures as stop failures, preservi
 
 ### 2. Delete fake summary behavior
 
-`OpenClawClient.generate_transcript_summary()` will stop checking `settings.fake_mode` for summary generation. `FAKE_MODE` may continue to affect desktop, Deepgram, and health behavior elsewhere in the app, but it will no longer affect summaries.
+`OpenClawClient.generate_transcript_summary()` will stop checking `settings.fake_mode` for summary generation. The old fake runtime flag may continue to affect desktop, Deepgram, and health behavior elsewhere in the app, but it will no longer affect summaries.
 
 This keeps the meaning narrow and explicit: fake runtime helpers remain where needed for capture simulation, but summaries are always real LLM requests.
 
@@ -101,5 +101,5 @@ No silent fallback to fake summary output will remain.
 
 - changing the structure of the canonical summary prompt
 - changing notification delivery behavior
-- removing `FAKE_MODE` from unrelated parts of the system
+- removing unrelated fake runtime helpers
 - introducing a database migration for `summary_model`

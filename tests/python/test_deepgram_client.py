@@ -11,7 +11,6 @@ def test_websocket_url_includes_vad_events_when_enabled(tmp_path) -> None:
         controller_db_path=tmp_path / "controller.db",
         artifacts_root=tmp_path / "artifacts",
         recordings_root=tmp_path / "recordings",
-        controller_events_root=tmp_path / "events",
         deepgram_vad_events=True,
     )
 
@@ -35,7 +34,6 @@ def test_websocket_url_can_accept_browser_voice_note_pcm(tmp_path) -> None:
         controller_db_path=tmp_path / "controller.db",
         artifacts_root=tmp_path / "artifacts",
         recordings_root=tmp_path / "recordings",
-        controller_events_root=tmp_path / "events",
     )
 
     from transcripts.deepgram_client import DeepgramClient

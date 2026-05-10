@@ -131,29 +131,16 @@ At minimum, update these values before real use:
 
 - `DEEPGRAM_API_KEY`
 
-If you use the optional isolated Docker desktop, also update:
-
-- `PUID` and `PGID` to match your host user and group IDs
-
-You can get the host IDs with:
-
-```bash
-id -u
-id -g
-```
-
 Important environment variables from `.env.example`:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `PUID` / `PGID` | Recommended | Host UID and GID for Docker volume ownership |
-| `TZ` | Yes | Host and container timezone |
 | `MACOS_CAPTURE_BASE_URL` | Optional | Base URL for the host-local macOS capture agent |
 | `DEEPGRAM_API_KEY` | Yes for real transcription | Deepgram live transcription auth |
 | `OPENCLAW_BASE_URL` | Optional | Base URL for the helper gateway |
 | `OPENCLAW_SUMMARY_MODEL` | Optional | Summary model used via OpenClaw |
 | `RECORDING_FPS`, `RECORDING_WIDTH`, `RECORDING_HEIGHT` | Optional | Desktop recording defaults |
-| `MAX_DURATION_MINUTES`, `SILENCE_TIMEOUT_MINUTES`, `ENABLE_AUTO_STOP` | Optional | Capture stopping behavior |
+| `SILENCE_TIMEOUT_MINUTES` | Optional | Native inactivity alert timeout |
 
 ### 3. Manual virtual environment setup
 
@@ -401,7 +388,6 @@ The command-line development workflow stores state in the repo:
 | `runtime/artifacts/jobs/<job_id>/` | Final job artifacts |
 | `runtime/logs/jobs/<job_id>/` | Debug logs and raw transcript data |
 | `runtime/controller/controller.db` | SQLite controller database |
-| `runtime/controller-events/` | Legacy controller event root retained for compatibility |
 
 The macOS app workflow stores controller state, recordings, artifacts, logs, and capture runtime files under `~/Library/Application Support/thirdeye/`.
 
