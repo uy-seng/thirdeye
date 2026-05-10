@@ -151,6 +151,16 @@ def controller_api_supports_desktops() -> bool:
         return False
 
 
+def controller_api_supports_processed_microphone() -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{CONTROLLER_API_PORT}/api/health", timeout=2.0) as response:
+            payload = json.load(response)
+    except (OSError, json.JSONDecodeError, urllib.error.HTTPError, urllib.error.URLError):
+        return False
+    features = payload.get("features", {}) if isinstance(payload, dict) else {}
+    return isinstance(features, dict) and features.get("processed_capture_microphone") is True
+
+
 def service_status(runtime_root: Path | None = None) -> dict[str, Any]:
     selected_runtime_root = resolve_runtime_root(runtime_root or application_support_root())
     return {
@@ -270,14 +280,18 @@ def start_services(*, repo_root: Path | None = None, runtime_root: Path | None =
         )
         wait_for_port_open(MACOS_CAPTURE_PORT, "macos-capture-agent")
 
-    if is_port_open(CONTROLLER_API_PORT) and not controller_api_supports_desktops():
-        if supervised_service_pid(selected_runtime_root, "controller-api") is None:
-            raise RuntimeError(
-                "Controller API is running on 127.0.0.1:8788 but does not support isolated desktops. "
-                "Stop that process and start local services again."
-            )
-        stop_supervised_service(selected_runtime_root, "controller-api")
-        wait_for_port_closed(CONTROLLER_API_PORT)
+    if is_port_open(CONTROLLER_API_PORT):
+        stale_reason = None
+        if not controller_api_supports_desktops():
+            stale_reason = "does not support isolated desktops"
+        elif not controller_api_supports_processed_microphone():
+            stale_reason = "does not support processed microphone capture"
+
+        if stale_reason and supervised_service_pid(selected_runtime_root, "controller-api") is None:
+            raise RuntimeError(f"Controller API is running on 127.0.0.1:8788 but {stale_reason}. Stop that process and start local services again.")
+        if stale_reason:
+            stop_supervised_service(selected_runtime_root, "controller-api")
+            wait_for_port_closed(CONTROLLER_API_PORT)
 
     if not is_port_open(CONTROLLER_API_PORT):
         spawn_service(

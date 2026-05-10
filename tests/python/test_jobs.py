@@ -376,7 +376,7 @@ def test_start_job_forwards_muted_target_audio_to_capture_backend(client, monkey
     assert calls == [("recording", True), ("live_audio", True)]
 
 
-def test_start_job_forwards_microphone_preference_without_muting_target_audio(client, monkeypatch) -> None:
+def test_start_job_keeps_processed_microphone_out_of_capture_helper(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
     backend = runtime.capture.capture_backends.require("macos_local")
     calls: list[tuple[str, bool, bool]] = []
@@ -419,11 +419,11 @@ def test_start_job_forwards_microphone_preference_without_muting_target_audio(cl
     )
 
     assert response.status_code == 200
-    assert calls == [("recording", False, True), ("live_audio", False, True)]
+    assert calls == [("recording", False, False), ("live_audio", False, False)]
     assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
 
 
-def test_start_job_with_microphone_starts_system_and_microphone_relays(client, monkeypatch) -> None:
+def test_start_job_with_processed_microphone_starts_only_system_relay(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
     started_sources: list[str] = []
 
@@ -450,14 +450,14 @@ def test_start_job_with_microphone_starts_system_and_microphone_relays(client, m
     )
 
     assert response.status_code == 200
-    assert started_sources == ["system", "microphone"]
+    assert started_sources == ["system"]
 
 
-def test_start_job_rejects_microphone_capture_when_app_audio_mute_is_requested(client) -> None:
+def test_start_job_accepts_processed_microphone_with_app_audio_mute(client) -> None:
     response = client.post(
         "/api/jobs/start",
         json={
-            "title": "Conflicting audio choices",
+            "title": "Processed microphone and muted app",
             "capture_backend": "macos_local",
             "record_microphone": True,
             "mute_target_audio": True,
@@ -472,8 +472,10 @@ def test_start_job_rejects_microphone_capture_when_app_audio_mute_is_requested(c
         },
     )
 
-    assert response.status_code == 422
-    assert "record_microphone cannot be combined with mute_target_audio" in response.text
+    assert response.status_code == 200
+    preferences = response.json()["metadata_json"]["session_preferences"]
+    assert preferences["record_microphone"] is True
+    assert preferences["mute_target_audio"] is True
 
 
 def test_mute_target_audio_endpoint_updates_active_local_app_capture_after_backend_ack(client, monkeypatch) -> None:
@@ -601,7 +603,7 @@ def test_mute_target_audio_endpoint_rejects_unsupported_backend_and_target(clien
     assert display_response.json() == {"detail": "runtime mute requires an app or window target"}
 
 
-def test_record_microphone_endpoint_updates_active_local_capture_after_backend_ack(client, monkeypatch) -> None:
+def test_record_microphone_endpoint_updates_processed_microphone_preference_without_backend_call(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(
         JobCreate(
@@ -636,13 +638,13 @@ def test_record_microphone_endpoint_updates_active_local_capture_after_backend_a
     response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": True})
 
     assert response.status_code == 200
-    assert calls == [(job.id, True)]
-    assert started_sources == ["microphone"]
+    assert calls == []
+    assert started_sources == []
     assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
     assert runtime.jobs.get_job(job.id).metadata_json["session_preferences"]["record_microphone"] is True
 
 
-def test_record_microphone_endpoint_stops_only_microphone_relay_when_disabled(client, monkeypatch) -> None:
+def test_record_microphone_endpoint_disables_processed_microphone_without_backend_call(client, monkeypatch) -> None:
     runtime = client.app.state.runtime
     job = runtime.jobs.create_job(
         JobCreate(
@@ -678,8 +680,8 @@ def test_record_microphone_endpoint_stops_only_microphone_relay_when_disabled(cl
     response = client.post(f"/api/jobs/{job.id}/record-microphone", json={"record_microphone": False})
 
     assert response.status_code == 200
-    assert calls == [(job.id, False)]
-    assert stopped_sources == ["microphone"]
+    assert calls == []
+    assert stopped_sources == []
     assert response.json()["metadata_json"]["session_preferences"]["record_microphone"] is False
 
 
@@ -734,7 +736,7 @@ def test_record_microphone_endpoint_rejects_inactive_job(client) -> None:
     assert response.json() == {"detail": "capture must be recording before changing microphone"}
 
 
-def test_record_microphone_endpoint_rejects_unsupported_backend_and_muted_app_audio(client) -> None:
+def test_record_microphone_endpoint_rejects_unsupported_backend_but_allows_muted_app_audio(client) -> None:
     runtime = client.app.state.runtime
     docker_job = runtime.jobs.create_job(JobCreate(title="Docker microphone"))
     runtime.jobs.transition_job(docker_job.id, JobState.PENDING_START, "test")
@@ -764,10 +766,13 @@ def test_record_microphone_endpoint_rejects_unsupported_backend_and_muted_app_au
     runtime.jobs.transition_job(app_job.id, JobState.PENDING_START, "test")
     runtime.jobs.transition_job(app_job.id, JobState.RECORDING, "test")
 
+    runtime.jobs.transition_job(app_job.id, JobState.LIVE_STREAM_CONNECTING, "test")
+    runtime.jobs.transition_job(app_job.id, JobState.LIVE_STREAMING, "test")
+
     muted_response = client.post(f"/api/jobs/{app_job.id}/record-microphone", json={"record_microphone": True})
 
-    assert muted_response.status_code == 400
-    assert muted_response.json() == {"detail": "turn off muted app audio before recording microphone"}
+    assert muted_response.status_code == 200
+    assert muted_response.json()["metadata_json"]["session_preferences"]["record_microphone"] is True
 
 
 def test_stop_endpoint_accepts_active_job(client) -> None:
@@ -780,6 +785,89 @@ def test_stop_endpoint_accepts_active_job(client) -> None:
 
     assert response.status_code == 202
     wait_for_state(client, job_id, "completed")
+
+
+def test_stop_capture_runs_processed_microphone_mix_off_event_loop(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    start = client.post(
+        "/api/jobs/start",
+        json={
+            "title": "Nonblocking microphone mix",
+            "capture_backend": "macos_local",
+            "record_microphone": True,
+            "generate_summary": False,
+            "capture_target": {
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        },
+    )
+    assert start.status_code == 200
+    job_id = start.json()["id"]
+    runtime.artifacts.microphone_stage_path(job_id).write_bytes(b"\x00\x00" * 160)
+    marker_delays: list[float] = []
+    mix_started_at = {"value": 0.0}
+
+    async def fake_rewrite_canonical_summary(*, job_id: str, prompt: str = "") -> str:
+        raise AssertionError("summary generation should be skipped")
+
+    async def run_stop() -> None:
+        loop = asyncio.get_running_loop()
+
+        def slow_mix(selected_job_id: str) -> None:
+            assert selected_job_id == job_id
+            mix_started_at["value"] = time.perf_counter()
+            loop.call_soon_threadsafe(lambda: marker_delays.append(time.perf_counter() - mix_started_at["value"]))
+            time.sleep(0.2)
+
+        monkeypatch.setattr(runtime.artifacts, "mix_recording_with_microphone", slow_mix)
+        monkeypatch.setattr(runtime.transcript_prompts, "rewrite_canonical_summary", fake_rewrite_canonical_summary)
+        stop_task = asyncio.create_task(runtime.capture.stop_capture(job_id, skip_summary=True))
+        await asyncio.sleep(0.05)
+        assert marker_delays and marker_delays[0] < 0.1
+        await stop_task
+
+    asyncio.run(run_stop())
+
+
+def test_stop_endpoint_resumes_job_stuck_after_recording_stop(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(
+        JobCreate(
+            title="Resume finalizing",
+            capture_backend="macos_local",
+            generate_summary=False,
+            capture_target={
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        )
+    )
+    runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "test")
+    runtime.jobs.transition_job(job.id, JobState.STOPPING, "test")
+    runtime.jobs.transition_job(job.id, JobState.FINALIZING_DEEPGRAM, "test")
+    runtime.artifacts.recording_stage_path(job.id).write_bytes(b"finalized-recording")
+
+    async def fake_rewrite_canonical_summary(*, job_id: str, prompt: str = "") -> str:
+        raise AssertionError("summary generation should be skipped")
+
+    monkeypatch.setattr(runtime.transcript_prompts, "rewrite_canonical_summary", fake_rewrite_canonical_summary)
+
+    response = client.post(f"/api/jobs/{job.id}/stop", json={"skip_summary": True})
+
+    assert response.status_code == 202
+    payload = wait_for_state(client, job.id, "completed")
+    paths = runtime.artifacts.job_paths(job.id)
+    assert payload["recording_path"] == str(paths.recording)
+    assert paths.recording.read_bytes() == b"finalized-recording"
+    assert paths.transcript_markdown.exists()
 
 
 def test_artifacts_endpoint_only_lists_registered_summary(client) -> None:

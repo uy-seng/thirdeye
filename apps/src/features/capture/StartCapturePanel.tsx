@@ -5,12 +5,13 @@ import { getCaptureTargets, startCapture } from "../../lib/api";
 import { desktopCaptureBusyLabel } from "../../lib/job-state";
 import { SILENCE_NOTIFICATION_TIMEOUT_MINUTES } from "../../lib/silence-notifications";
 import type { CaptureBackend, CaptureTarget, JobResponse } from "../../lib/types";
+import { requestProcessedMicrophoneStream, stopMediaStream } from "../../lib/voice-note-audio";
 import { ScreenRecordingPermissionNotice } from "./ScreenRecordingPermissionNotice";
 import { isScreenRecordingPermissionError, targetGroups, targetLabel } from "./captureTargets";
 
 type StartCapturePanelProps = {
   activeCaptures?: JobResponse[];
-  onCreated: (job: JobResponse) => void;
+  onCreated: (job: JobResponse, microphoneStream?: MediaStream | null) => void | Promise<void>;
   targetRefreshSignal?: unknown;
 };
 
@@ -29,8 +30,7 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
   const selectedTarget = targets.find((target) => target.id === targetId);
   const permissionBlocked = backend === "macos_local" && isScreenRecordingPermissionError(message);
   const canRecordMicrophone = backend === "macos_local";
-  const canMuteTargetAudio =
-    backend === "macos_local" && !recordMicrophone && Boolean(selectedTarget && ["application", "window"].includes(selectedTarget.kind));
+  const canMuteTargetAudio = backend === "macos_local" && Boolean(selectedTarget && ["application", "window"].includes(selectedTarget.kind));
   const selectedTargetUnavailable = selectedTarget?.available === false;
   const macCaptureBlocked = backend === "macos_local" && activeCaptures.some((job) => job.capture_backend === "macos_local");
   const muteTargetHelp = "This mutes the selected app while capture runs. The transcript and recording still receive audio.";
@@ -87,23 +87,30 @@ export function StartCapturePanel({ activeCaptures = [], onCreated, targetRefres
     }
     setBusy(true);
     setMessage("");
+    let microphoneStream: MediaStream | null = null;
+    const shouldRecordMicrophone = canRecordMicrophone ? recordMicrophone : false;
     try {
-      onCreated(
-        await startCapture({
-          title,
-          capture_backend: backend,
-          capture_target: selectedTarget,
-          record_screen: screenRecord,
-          record_microphone: canRecordMicrophone ? recordMicrophone : false,
-          generate_summary: generateSummary,
-          mute_target_audio: canMuteTargetAudio && !recordMicrophone ? muteTargetAudio : false,
-          notify_on_inactivity: notifyOnInactivity,
-          silence_timeout_minutes: SILENCE_NOTIFICATION_TIMEOUT_MINUTES,
-        }),
-      );
+      if (shouldRecordMicrophone) {
+        setMessage("Preparing microphone...");
+        microphoneStream = await requestProcessedMicrophoneStream();
+      }
+      const job = await startCapture({
+        title,
+        capture_backend: backend,
+        capture_target: selectedTarget,
+        record_screen: screenRecord,
+        record_microphone: shouldRecordMicrophone,
+        generate_summary: generateSummary,
+        mute_target_audio: canMuteTargetAudio ? muteTargetAudio : false,
+        notify_on_inactivity: notifyOnInactivity,
+        silence_timeout_minutes: SILENCE_NOTIFICATION_TIMEOUT_MINUTES,
+      });
+      await onCreated(job, microphoneStream);
+      microphoneStream = null;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to start capture.");
     } finally {
+      stopMediaStream(microphoneStream);
       setBusy(false);
     }
   }

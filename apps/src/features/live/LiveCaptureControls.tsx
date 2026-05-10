@@ -40,9 +40,8 @@ export function LiveCaptureControls({
           <div>
             <p className="eyebrow">App audio</p>
             <h2>{muted ? "Muted for you" : "Playing for you"}</h2>
-            {microphoneEnabled ? <p className="helper-text">Stop microphone recording before muting this app.</p> : null}
           </div>
-          <Button disabled={mutePending || microphoneEnabled} onClick={() => onSetMuted(job.id, !muted)} variant="secondary">
+          <Button disabled={mutePending} onClick={() => onSetMuted(job.id, !muted)} variant="secondary">
             <AudioIcon aria-hidden="true" size={16} />
             {mutePending ? "Updating..." : muted ? "Unmute app" : "Mute app"}
           </Button>
@@ -53,9 +52,8 @@ export function LiveCaptureControls({
           <div>
             <p className="eyebrow">Microphone</p>
             <h2>{microphoneEnabled ? "Recording microphone" : "Microphone off"}</h2>
-            {muted ? <p className="helper-text">Unmute the app before recording microphone.</p> : null}
           </div>
-          <Button disabled={microphonePending || muted} onClick={() => onSetRecordMicrophone(job.id, !microphoneEnabled)} variant="secondary">
+          <Button disabled={microphonePending} onClick={() => onSetRecordMicrophone(job.id, !microphoneEnabled)} variant="secondary">
             <MicrophoneIcon aria-hidden="true" size={16} />
             {microphonePending ? "Updating..." : microphoneEnabled ? "Stop microphone" : "Record microphone"}
           </Button>

@@ -12,7 +12,7 @@ import {
   voiceNoteLiveUrl,
 } from "../../lib/api";
 import { getDefaultVoiceNoteSummaryPrompt } from "../../lib/prompts";
-import { encodeLinear16, mergedTranscriptText, mergeTranscriptEvent } from "../../lib/voice-note-audio";
+import { encodeLinear16, mergedTranscriptText, mergeTranscriptEvent, requestProcessedMicrophoneStream } from "../../lib/voice-note-audio";
 import {
   clearLegacyVoiceNotes,
   createVoiceNote,
@@ -258,7 +258,7 @@ export function VoiceNotesPanel() {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await requestProcessedMicrophoneStream();
       const recorder = new MediaRecorder(stream);
 
       chunksRef.current = [];

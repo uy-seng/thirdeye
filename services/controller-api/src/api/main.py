@@ -4,6 +4,8 @@ import asyncio
 import contextlib
 import json
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -46,6 +48,8 @@ from jobs.models import (
 )
 from api.runtime import AppRuntime, create_runtime
 from core.settings import Settings
+from core.utils import utcnow
+from jobs.state_machine import ACTIVE_JOB_STATES, JobState
 from transcripts.deepgram_client import DeepgramClient, normalize_deepgram_message
 from transcripts.summary_cache import TranscriptSummaryRequestNotFoundError
 
@@ -142,6 +146,147 @@ async def handle_voice_note_stream(runtime: AppRuntime, websocket: WebSocket) ->
             await websocket.send_json({"type": "complete"})
     with contextlib.suppress(Exception):
         await deepgram_socket.close()
+
+
+def _parse_job_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+class ProcessedMicrophoneStageWriter:
+    sample_rate = 16_000
+    bytes_per_sample = 2
+
+    def __init__(self, path: Path, started_at: str | None) -> None:
+        self.path = path
+        self.started_at = _parse_job_timestamp(started_at)
+        self._handle = None
+        self._started = False
+
+    def write(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        if self._handle is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._handle = self.path.open("ab")
+        if not self._started:
+            self._started = True
+            self._write_leading_silence()
+        self._handle.write(chunk)
+        self._handle.flush()
+
+    def close(self) -> None:
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+    def _write_leading_silence(self) -> None:
+        if self.started_at is None or self._handle is None:
+            return
+        delay_seconds = max(0.0, (utcnow() - self.started_at).total_seconds())
+        target_bytes = int(delay_seconds * self.sample_rate) * self.bytes_per_sample
+        existing_bytes = self.path.stat().st_size if self.path.exists() else 0
+        silence_bytes = max(0, target_bytes - existing_bytes)
+        if silence_bytes > 0:
+            self._handle.write(b"\x00" * silence_bytes)
+
+
+async def _stop_capture_after_microphone_failure(runtime: AppRuntime, job_id: str, message: str) -> None:
+    with contextlib.suppress(Exception):
+        job = runtime.jobs.get_job(job_id)
+        if JobState(job.state) not in ACTIVE_JOB_STATES or not runtime.capture._record_microphone_enabled(job):
+            return
+        await runtime.capture.mark_degraded(job_id, message)
+        await runtime.capture.dispatch_stop_capture(job_id, skip_summary=True)
+
+
+async def handle_capture_microphone_stream(runtime: AppRuntime, websocket: WebSocket, job_id: str) -> None:
+    await websocket.accept()
+    try:
+        job = runtime.jobs.get_job(job_id)
+    except KeyError:
+        await websocket.send_json({"type": "warning", "message": "Capture not found."})
+        await websocket.send_json({"type": "complete"})
+        return
+    if not runtime.capture._record_microphone_enabled(job):
+        await websocket.send_json({"type": "warning", "message": "Microphone recording is off."})
+        await websocket.send_json({"type": "complete"})
+        return
+
+    deepgram = DeepgramClient(runtime.settings)
+    try:
+        deepgram_socket = await deepgram.connect(
+            model=job.deepgram_model,
+            language=job.deepgram_language,
+            diarize=job.diarize,
+            smart_format=job.smart_format,
+            interim_results=job.interim_results,
+            vad_events=runtime.settings.deepgram_vad_events,
+            encoding="linear16",
+            sample_rate=16000,
+            channels=1,
+        )
+    except Exception as exc:  # pragma: no cover - network
+        await websocket.send_json({"type": "warning", "message": str(exc) or "Unable to start microphone recording."})
+        await websocket.send_json({"type": "complete"})
+        return
+
+    writer = ProcessedMicrophoneStageWriter(runtime.artifacts.microphone_stage_path(job_id), job.started_at)
+    finalized = False
+    await websocket.send_json({"type": "ready"})
+
+    async def send_microphone_audio() -> None:
+        nonlocal finalized
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                break
+            if message.get("bytes"):
+                chunk = message["bytes"]
+                writer.write(chunk)
+                await deepgram_socket.send(chunk)
+                continue
+            if message.get("text"):
+                with contextlib.suppress(json.JSONDecodeError):
+                    payload = json.loads(message["text"])
+                    if payload.get("type") == "Finalize":
+                        finalized = True
+                        await deepgram_socket.send(json.dumps({"type": "Finalize"}))
+                        await deepgram_socket.send(json.dumps({"type": "CloseStream"}))
+                        break
+
+    async def receive_transcript_events() -> None:
+        async for message in deepgram_socket:
+            if isinstance(message, bytes):
+                continue
+            payload = json.loads(message)
+            payload["source"] = "microphone"
+            await runtime.capture.handle_deepgram_event(job_id, payload)
+        await websocket.send_json({"type": "complete"})
+
+    sender = asyncio.create_task(send_microphone_audio())
+    receiver = asyncio.create_task(receive_transcript_events())
+    try:
+        with contextlib.suppress(Exception):
+            await sender
+        if finalized:
+            with contextlib.suppress(Exception, asyncio.TimeoutError):
+                await asyncio.wait_for(receiver, timeout=5.0)
+        else:
+            receiver.cancel()
+            asyncio.create_task(_stop_capture_after_microphone_failure(runtime, job_id, "Microphone recording stopped."))
+    finally:
+        writer.close()
+        if not receiver.done():
+            receiver.cancel()
+        with contextlib.suppress(Exception):
+            await deepgram_socket.close()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -513,9 +658,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except WebSocketDisconnect:
             return
 
+    @app.websocket("/ws/jobs/{job_id}/microphone")
+    async def capture_microphone_socket(websocket: WebSocket, job_id: str) -> None:
+        try:
+            await handle_capture_microphone_stream(runtime, websocket, job_id)
+        except WebSocketDisconnect:
+            return
+
     @app.get("/api/health")
     async def api_health() -> JSONResponse:
-        return JSONResponse({"status": "ok"})
+        return JSONResponse({"status": "ok", "features": {"processed_capture_microphone": True}})
 
     @app.get("/artifacts/{job_id}/{filename}")
     async def artifact_download(job_id: str, filename: str) -> FileResponse:

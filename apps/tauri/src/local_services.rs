@@ -158,15 +158,22 @@ fn reconcile_controller_api(
     let child_running = child_is_running(&mut children.controller_api)?;
     let port_open = is_port_open(CONTROLLER_API_PORT);
 
-    if port_open && !controller_api_supports_desktops() {
+    let stale_reason = if port_open && !controller_api_supports_desktops() {
+        Some("does not support isolated desktops")
+    } else if port_open && !controller_api_supports_processed_microphone() {
+        Some("does not support processed microphone capture")
+    } else {
+        None
+    };
+
+    if let Some(reason) = stale_reason {
         if child_running || supervisor_pid_file(runtime_root, "controller-api").exists() {
             stop_child_service(runtime_root, "controller-api", &mut children.controller_api)?;
             wait_for_port_closed(CONTROLLER_API_PORT, Duration::from_secs(3));
         } else {
-            return Err(
-                "Controller API is running on 127.0.0.1:8788 but does not support isolated desktops. Stop that process and start local services again."
-                    .to_string(),
-            );
+            return Err(format!(
+                "Controller API is running on 127.0.0.1:8788 but {reason}. Stop that process and start local services again."
+            ));
         }
     } else if child_running || port_open {
         return Ok(());
@@ -342,6 +349,24 @@ fn controller_api_supports_desktops() -> bool {
         local_http_status(CONTROLLER_API_PORT, "/api/desktops", Duration::from_secs(2)),
         Ok(200)
     )
+}
+
+fn controller_api_supports_processed_microphone() -> bool {
+    let Ok(response) = local_http_get(CONTROLLER_API_PORT, "/api/health", Duration::from_secs(2))
+    else {
+        return false;
+    };
+    let Some(body) = response.split("\r\n\r\n").nth(1) else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    payload
+        .get("features")
+        .and_then(|features| features.get("processed_capture_microphone"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
 
 fn local_http_status(port: u16, path: &str, timeout: Duration) -> Result<u16, String> {

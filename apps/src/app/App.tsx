@@ -12,13 +12,20 @@ import {
   setRecordMicrophoneEnabled,
   setTargetAudioMuted,
   stopCapture,
+  captureMicrophoneLiveUrl,
 } from "../lib/api";
 import { userVisibleArtifacts } from "../lib/artifacts";
 import { chooseSelectedJobId } from "../lib/job-selection";
-import { ACTIVE_STATES, canDeleteJob, canStopCapture } from "../lib/job-state";
+import { ACTIVE_STATES, canDeleteJob, canStopCapture, recordMicrophoneEnabled } from "../lib/job-state";
 import { getServiceStatus, startLocalServices, stopLocalServices } from "../lib/services";
 import type { ArtifactFile, DesktopSession, JobDetailResponse, JobResponse, ServiceStatus } from "../lib/types";
 import { useSilenceNotification } from "../lib/use-silence-notification";
+import {
+  requestProcessedMicrophoneStream,
+  startMicrophonePcmStream,
+  stopMediaStream,
+  type MicrophonePcmStreamSession,
+} from "../lib/voice-note-audio";
 import { Navigation } from "../components/navigation/Navigation";
 import { ServiceStrip } from "../components/services/ServiceStrip";
 import { Button } from "../components/ui";
@@ -71,6 +78,7 @@ export function App() {
   const [notice, setNotice] = useState("Starting local services...");
   const [silenceAlert, setSilenceAlert] = useState<SilenceAppAlertPayload | null>(null);
   const selectedJobIdRef = useRef<string | null>(null);
+  const microphoneSessionsRef = useRef<Record<string, MicrophonePcmStreamSession>>({});
 
   const activeJobs = useMemo(() => jobs.filter((job) => ACTIVE_STATES.has(job.state)), [jobs]);
   const visibleView = view === "live" && activeJobs.length === 0 ? "capture" : view;
@@ -256,6 +264,13 @@ export function App() {
     setNotice((currentNotice) => (currentNotice === deleteSuccessNotice ? "" : currentNotice));
   }, [view]);
 
+  useEffect(() => () => {
+    Object.values(microphoneSessionsRef.current).forEach((session) => {
+      void session.stop({ finalize: false });
+    });
+    microphoneSessionsRef.current = {};
+  }, []);
+
   async function handleStart() {
     setNotice((await startLocalServices()).detail);
     await refreshStatus();
@@ -266,7 +281,59 @@ export function App() {
     await refreshStatus();
   }
 
-  async function handleCaptureCreated(job: JobResponse) {
+  async function startCaptureMicrophone(jobId: string, microphoneStream: MediaStream | null = null) {
+    if (microphoneSessionsRef.current[jobId]) {
+      stopMediaStream(microphoneStream);
+      return;
+    }
+    const stream = microphoneStream ?? (await requestProcessedMicrophoneStream());
+    try {
+      const session = await startMicrophonePcmStream({
+        stream,
+        url: captureMicrophoneLiveUrl(jobId),
+        requireReady: true,
+        onMessage: (event) => {
+          if (typeof event === "object" && event && "type" in event && event.type === "warning" && "message" in event) {
+            setNotice(String(event.message || "Microphone recording stopped."));
+          }
+        },
+        onClose: () => {
+          delete microphoneSessionsRef.current[jobId];
+          setNotice("Microphone recording stopped. Stopping the capture.");
+          void stopCapture(jobId).then(() => loadJobs(jobId)).catch((error) => {
+            setNotice(error instanceof Error ? error.message : "Unable to stop capture after microphone stopped.");
+          });
+        },
+      });
+      microphoneSessionsRef.current[jobId] = session;
+    } catch (error) {
+      stopMediaStream(stream);
+      throw error;
+    }
+  }
+
+  async function stopCaptureMicrophone(jobId: string, finalize = true) {
+    const session = microphoneSessionsRef.current[jobId];
+    if (!session) {
+      return;
+    }
+    delete microphoneSessionsRef.current[jobId];
+    await session.stop({ finalize });
+  }
+
+  async function handleCaptureCreated(job: JobResponse, microphoneStream: MediaStream | null = null) {
+    try {
+      if (recordMicrophoneEnabled(job)) {
+        await startCaptureMicrophone(job.id, microphoneStream);
+        microphoneStream = null;
+      }
+    } catch (error) {
+      await setRecordMicrophoneEnabled(job.id, false).catch(() => undefined);
+      await stopCapture(job.id).catch(() => undefined);
+      throw error;
+    } finally {
+      stopMediaStream(microphoneStream);
+    }
     selectJob(job.id);
     setSelectedJob(null);
     setArtifacts([]);
@@ -290,6 +357,7 @@ export function App() {
   async function handleStopJob(jobId: string) {
     setStoppingJobId(jobId);
     try {
+      await stopCaptureMicrophone(jobId);
       await stopCapture(jobId);
       await loadJobs();
       await loadDesktops();
@@ -317,12 +385,26 @@ export function App() {
 
   async function handleSetRecordMicrophone(jobId: string, enabled: boolean) {
     setMicrophoneJobId(jobId);
+    let microphoneStream: MediaStream | null = null;
     try {
-      await setRecordMicrophoneEnabled(jobId, enabled);
+      if (enabled) {
+        microphoneStream = await requestProcessedMicrophoneStream();
+        await setRecordMicrophoneEnabled(jobId, true);
+        await startCaptureMicrophone(jobId, microphoneStream);
+        microphoneStream = null;
+      } else {
+        await stopCaptureMicrophone(jobId);
+        await setRecordMicrophoneEnabled(jobId, false);
+      }
       await loadJobs(jobId);
       await loadSelectedJob(jobId);
       setNotice("");
     } catch (error) {
+      stopMediaStream(microphoneStream);
+      if (enabled) {
+        await setRecordMicrophoneEnabled(jobId, false).catch(() => undefined);
+        await stopCapture(jobId).catch(() => undefined);
+      }
       setNotice(error instanceof Error ? error.message : "Unable to change microphone.");
     } finally {
       setMicrophoneJobId(null);
@@ -403,7 +485,7 @@ export function App() {
           <div className="grid-two">
             <ServiceStrip onRefresh={() => void refreshStatus()} onStart={() => void handleStart()} onStop={() => void handleStopServices()} status={serviceStatus} />
             <DesktopSessionsPanel desktops={desktops} onCreate={handleCreateDesktop} onDestroyed={loadDesktops} onRefresh={loadDesktops} />
-            <StartCapturePanel activeCaptures={activeJobs} onCreated={(job) => void handleCaptureCreated(job)} targetRefreshSignal={desktops} />
+            <StartCapturePanel activeCaptures={activeJobs} onCreated={handleCaptureCreated} targetRefreshSignal={desktops} />
             <JobsTable jobs={jobs.slice(0, 6)} onSelect={(jobId) => {
               selectJob(jobId);
               setView("captures");
@@ -414,7 +496,7 @@ export function App() {
         {visibleView === "capture" ? (
           <div className="grid-two">
             <DesktopSessionsPanel desktops={desktops} onCreate={handleCreateDesktop} onDestroyed={loadDesktops} onRefresh={loadDesktops} />
-            <StartCapturePanel activeCaptures={activeJobs} onCreated={(job) => void handleCaptureCreated(job)} targetRefreshSignal={desktops} />
+            <StartCapturePanel activeCaptures={activeJobs} onCreated={handleCaptureCreated} targetRefreshSignal={desktops} />
           </div>
         ) : null}
 

@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
 from api.main import create_app
 from api.main import iter_live_stream_events, sse_payload
+from api.main import ProcessedMicrophoneStageWriter
 from jobs.models import JobCreate
 from jobs.state_machine import JobState
 
@@ -59,6 +61,13 @@ def test_system_check_endpoints_are_removed(client) -> None:
     assert client.get("/api/settings/test/desktop").status_code == 404
     assert client.get("/api/settings/test/deepgram").status_code == 404
     assert client.get("/api/settings/test/openclaw").status_code == 404
+
+
+def test_health_advertises_processed_capture_microphone_support(client) -> None:
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["features"]["processed_capture_microphone"] is True
 
 
 def test_artifacts_overview_lists_jobs_with_artifacts(client) -> None:
@@ -342,6 +351,112 @@ def test_voice_note_websocket_transcribes_streamed_microphone_audio(client, monk
     assert final["type"] == "final"
     assert final["text"]
     assert complete == {"type": "complete"}
+
+
+def test_capture_microphone_websocket_streams_processed_audio_to_deepgram_and_stage_file(client, monkeypatch) -> None:
+    runtime = client.app.state.runtime
+    job = runtime.jobs.create_job(
+        JobCreate(
+            title="Processed capture microphone",
+            capture_backend="macos_local",
+            record_screen=False,
+            record_microphone=True,
+            generate_summary=False,
+            capture_target={
+                "id": "display:main",
+                "kind": "display",
+                "label": "Built-in Display",
+                "display_id": "main",
+            },
+        )
+    )
+    runtime.jobs.transition_job(job.id, JobState.PENDING_START, "test")
+    runtime.jobs.transition_job(job.id, JobState.RECORDING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAM_CONNECTING, "test")
+    runtime.jobs.transition_job(job.id, JobState.LIVE_STREAMING, "test")
+    sent_messages: list[bytes | str] = []
+
+    class FakeDeepgramSocket:
+        def __init__(self) -> None:
+            self.messages: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def send(self, message) -> None:
+            sent_messages.append(message)
+            if not isinstance(message, str):
+                await self.messages.put(
+                    json.dumps(
+                        {
+                            "type": "Results",
+                            "is_final": False,
+                            "start": 0.0,
+                            "duration": 0.5,
+                            "channel": {"alternatives": [{"transcript": "self draft", "words": []}]},
+                        }
+                    )
+                )
+                return
+            payload = json.loads(message)
+            if payload.get("type") == "Finalize":
+                await self.messages.put(
+                    json.dumps(
+                        {
+                            "type": "Results",
+                            "is_final": True,
+                            "start": 0.0,
+                            "duration": 1.0,
+                            "channel": {"alternatives": [{"transcript": "self captured", "words": []}]},
+                        }
+                    )
+                )
+            if payload.get("type") == "CloseStream":
+                await self.messages.put(None)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            message = await self.messages.get()
+            if message is None:
+                raise StopAsyncIteration
+            return message
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_connect(self, **kwargs):
+        return FakeDeepgramSocket()
+
+    monkeypatch.setattr("api.main.DeepgramClient.connect", fake_connect)
+
+    chunk = b"\x01\x02" * 256
+    with client.websocket_connect(f"/ws/jobs/{job.id}/microphone") as websocket:
+        assert websocket.receive_json() == {"type": "ready"}
+        websocket.send_bytes(chunk)
+        websocket.send_json({"type": "Finalize"})
+        assert websocket.receive_json() == {"type": "complete"}
+
+    microphone_path = runtime.artifacts.microphone_stage_path(job.id)
+    assert microphone_path.read_bytes().endswith(chunk)
+    assert any(message == chunk for message in sent_messages)
+    snapshot = runtime.transcript_store.snapshot(job.id)
+    assert snapshot["sources"]["microphone"]["final_blocks"][0]["text"] == "self captured"
+
+
+def test_processed_microphone_stage_writer_pads_only_missing_gap_when_reenabled(tmp_path, monkeypatch) -> None:
+    from api import main as api_main
+
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
+    started_at = (now - timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
+    stage_path = tmp_path / "microphone_audio.pcm"
+    one_second = ProcessedMicrophoneStageWriter.sample_rate * ProcessedMicrophoneStageWriter.bytes_per_sample
+    stage_path.write_bytes(b"\x01" * one_second)
+    monkeypatch.setattr(api_main, "utcnow", lambda: now)
+
+    writer = ProcessedMicrophoneStageWriter(stage_path, started_at)
+    writer.write(b"live")
+    writer.close()
+
+    assert stage_path.stat().st_size == (one_second * 2) + len(b"live")
 
 
 def test_voice_note_websocket_uses_live_deepgram_path(settings, monkeypatch) -> None:
