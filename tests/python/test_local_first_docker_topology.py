@@ -49,6 +49,50 @@ def test_compose_uses_thirdeye_project_identity() -> None:
     assert 'name: thirdeye_' not in compose
 
 
+def test_openclaw_restart_uses_thirdeye_compose_project_name(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config_path = home / ".openclaw" / "openclaw.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text('{"gateway":{"auth":{"token":"test-token"}}}\n', encoding="utf-8")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker-args.log"
+    docker = bin_dir / "docker"
+    docker.write_text(
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "${DOCKER_LOG}"\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    openclaw = bin_dir / "openclaw"
+    openclaw.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    openclaw.chmod(0o755)
+
+    result = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts" / "remediate_openclaw_gateway.sh"), "--restart"],
+        env=os.environ
+        | {
+            "DOCKER_LOG": str(docker_log),
+            "HOME": str(home),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
+    assert (
+        "compose --project-name infra -f infra/compose.yaml --profile openclaw down --remove-orphans"
+        in docker_calls
+    )
+    assert (
+        "compose --project-name thirdeye -f infra/compose.yaml --profile openclaw up -d --force-recreate --no-deps openclaw"
+        in docker_calls
+    )
+
+
 def test_compose_does_not_enable_isolated_desktop_basic_auth() -> None:
     compose = (ROOT / "infra" / "compose.yaml").read_text(encoding="utf-8")
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")

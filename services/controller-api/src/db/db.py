@@ -34,6 +34,7 @@ STARTUP_MIGRATIONS = (
     "0001_rebuild_jobs_schema",
     "0002_add_operations_and_artifact_manifest",
     "0003_add_voice_notes",
+    "0004_rebuild_jobs_schema_without_legacy_duration_columns",
 )
 
 
@@ -62,6 +63,11 @@ def run_startup_migrations(engine: Engine) -> None:
             if table is not None:
                 table.create(connection, checkfirst=True)
             connection.exec_driver_sql("INSERT INTO schema_migrations (version) VALUES ('0003_add_voice_notes')")
+        if "0004_rebuild_jobs_schema_without_legacy_duration_columns" not in applied:
+            _rebuild_table_if_columns_differ(connection, "jobs")
+            connection.exec_driver_sql(
+                "INSERT INTO schema_migrations (version) VALUES ('0004_rebuild_jobs_schema_without_legacy_duration_columns')"
+            )
 
 
 def _rebuild_table_if_columns_differ(connection, table_name: str) -> None:

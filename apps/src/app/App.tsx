@@ -3,6 +3,7 @@ import { Bell, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  captureMicrophoneLiveUrl,
   createDesktop,
   deleteJob,
   getArtifactsOverview,
@@ -12,7 +13,6 @@ import {
   setRecordMicrophoneEnabled,
   setTargetAudioMuted,
   stopCapture,
-  captureMicrophoneLiveUrl,
 } from "../lib/api";
 import { userVisibleArtifacts } from "../lib/artifacts";
 import { chooseSelectedJobId } from "../lib/job-selection";
@@ -28,9 +28,8 @@ import {
   type MicrophonePcmStreamSession,
 } from "../lib/voice-note-audio";
 import { Navigation } from "../components/navigation/Navigation";
-import { ServiceStrip } from "../components/services/ServiceStrip";
 import { Button } from "../components/ui";
-import { DesktopSessionsPanel, StartCapturePanel } from "../features/capture";
+import { StartCapturePanel } from "../features/capture";
 import { JobDetail, JobsTable } from "../features/jobs";
 import { LiveCaptureControls, LiveJobSelector, LiveSummaryPanel, LiveTranscript } from "../features/live";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
@@ -53,10 +52,8 @@ function wait(ms: number) {
 
 function viewTitle(view: View) {
   const titles: Record<View, string> = {
-    overview: "Operations overview",
     capture: "Capture",
     live: "Live",
-    captures: "Captures",
     "voice-notes": "Voice notes",
     settings: "Settings",
   };
@@ -226,7 +223,6 @@ export function App() {
 
   useEffect(() => {
     async function boot() {
-      void refreshControllerData();
       try {
         const result = await startLocalServices();
         setNotice(result.detail);
@@ -482,27 +478,9 @@ export function App() {
         ) : null}
         {notice ? <p className="notice">{notice}</p> : null}
 
-        {visibleView === "overview" ? (
-          <div className="grid-two">
-            <ServiceStrip onRefresh={() => void refreshStatus()} onStart={() => void handleStart()} onStop={() => void handleStopServices()} status={serviceStatus} />
-            <DesktopSessionsPanel desktops={desktops} onCreate={handleCreateDesktop} onDestroyed={loadDesktops} onRefresh={loadDesktops} />
-            <StartCapturePanel activeCaptures={activeJobs} onCreated={handleCaptureCreated} targetRefreshSignal={desktops} />
-            <JobsTable jobs={jobs.slice(0, 6)} onSelect={(jobId) => {
-              selectJob(jobId);
-              setView("captures");
-            }} selectedJobId={selectedJobId} />
-          </div>
-        ) : null}
-
         {visibleView === "capture" ? (
           <div className="grid-two">
-            <DesktopSessionsPanel desktops={desktops} onCreate={handleCreateDesktop} onDestroyed={loadDesktops} onRefresh={loadDesktops} />
             <StartCapturePanel activeCaptures={activeJobs} onCreated={handleCaptureCreated} targetRefreshSignal={desktops} />
-          </div>
-        ) : null}
-
-        {visibleView === "captures" ? (
-          <div className="grid-two">
             <JobsTable jobs={jobs} onSelect={selectJob} selectedJobId={selectedJobId} />
             <JobDetail
               artifacts={artifacts}
@@ -539,6 +517,10 @@ export function App() {
 
         {visibleView === "settings" ? (
           <SettingsPanel
+            desktops={desktops}
+            onCreateDesktop={handleCreateDesktop}
+            onDesktopDestroyed={loadDesktops}
+            onDesktopsRefresh={loadDesktops}
             onRefresh={() => void refreshStatus()}
             onStart={() => void handleStart()}
             onStop={() => void handleStopServices()}

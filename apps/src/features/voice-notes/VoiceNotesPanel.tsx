@@ -743,59 +743,61 @@ export function VoiceNotesPanel() {
         </div>
       </Card>
 
-      <Card className="summary-panel voice-ask-ai-card">
-        <div className="card-heading-row">
-          <div>
-            <p className="eyebrow">Ask AI</p>
-            <h2>Ask about this note</h2>
-          </div>
-          <Badge tone={askBadgeTone}>{askBadgeLabel}</Badge>
-        </div>
-        <p className="muted">{askContextLabel}</p>
-        <form className="stack" onSubmit={(event) => void generateAskAiSummary(event)}>
-          <label>
-            Ask about this note
-            <TextArea
-              disabled={askBusyAction !== ""}
-              onChange={(event) => setAskPrompt(event.target.value)}
-              placeholder="Summarize key points and follow-up actions"
-              rows={5}
-              value={askPrompt}
-            />
-          </label>
-          <div className="toolbar">
-            <Button disabled={!askCanGenerate} type="submit">
-              <Sparkles aria-hidden="true" size={16} />
-              {askBusyAction === "generate" ? "Generating..." : "Generate Summary"}
-            </Button>
-            <Button disabled={!askCanSave} onClick={() => void saveAskAiResult()} type="button" variant="secondary">
-              <Save aria-hidden="true" size={16} />
-              {askBusyAction === "save" ? "Saving..." : "Save Result"}
-            </Button>
-            <Button disabled={!askCanReset} onClick={resetAskAiSummary} type="button" variant="quiet">
-              <RefreshCw aria-hidden="true" size={16} />
-              Reset
-            </Button>
-          </div>
-        </form>
-        {askMessage ? (
-          <p aria-live="polite" className="form-message">
-            {askMessage}
-          </p>
-        ) : null}
-        {askResult ? (
-          <div className="summary-output">
-            <div className="summary-meta">
-              <Badge tone="info">{askResult.provider}</Badge>
-              <Badge tone="neutral">{new Date(askResult.generatedAt).toLocaleString()}</Badge>
-              {pendingSavedLiveSummary === askResult ? <Badge tone="good">Saved for this recording</Badge> : null}
+      {isRecording ? (
+        <Card className="summary-panel voice-ask-ai-card">
+          <div className="card-heading-row">
+            <div>
+              <p className="eyebrow">Ask AI</p>
+              <h2>Ask about this note</h2>
             </div>
-            <pre>{askResult.markdown}</pre>
+            <Badge tone={askBadgeTone}>{askBadgeLabel}</Badge>
           </div>
-        ) : (
-          <p className="muted">Generate a summary from the words available right now.</p>
-        )}
-      </Card>
+          <p className="muted">{askContextLabel}</p>
+          <form className="stack" onSubmit={(event) => void generateAskAiSummary(event)}>
+            <label>
+              Ask about this note
+              <TextArea
+                disabled={askBusyAction !== ""}
+                onChange={(event) => setAskPrompt(event.target.value)}
+                placeholder="Summarize key points and follow-up actions"
+                rows={5}
+                value={askPrompt}
+              />
+            </label>
+            <div className="toolbar">
+              <Button disabled={!askCanGenerate} type="submit">
+                <Sparkles aria-hidden="true" size={16} />
+                {askBusyAction === "generate" ? "Generating..." : "Generate Summary"}
+              </Button>
+              <Button disabled={!askCanSave} onClick={() => void saveAskAiResult()} type="button" variant="secondary">
+                <Save aria-hidden="true" size={16} />
+                {askBusyAction === "save" ? "Saving..." : "Save Result"}
+              </Button>
+              <Button disabled={!askCanReset} onClick={resetAskAiSummary} type="button" variant="quiet">
+                <RefreshCw aria-hidden="true" size={16} />
+                Reset
+              </Button>
+            </div>
+          </form>
+          {askMessage ? (
+            <p aria-live="polite" className="form-message">
+              {askMessage}
+            </p>
+          ) : null}
+          {askResult ? (
+            <div className="summary-output">
+              <div className="summary-meta">
+                <Badge tone="info">{askResult.provider}</Badge>
+                <Badge tone="neutral">{new Date(askResult.generatedAt).toLocaleString()}</Badge>
+                {pendingSavedLiveSummary === askResult ? <Badge tone="good">Saved for this recording</Badge> : null}
+              </div>
+              <pre>{askResult.markdown}</pre>
+            </div>
+          ) : (
+            <p className="muted">Generate a summary from the words available right now.</p>
+          )}
+        </Card>
+      ) : null}
 
       <Card className="voice-notes-list-card">
         <div className="card-heading-row">

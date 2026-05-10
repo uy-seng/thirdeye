@@ -1,4 +1,4 @@
-import { Activity, Captions, ListChecks, Mic, MonitorUp, Settings } from "lucide-react";
+import { Activity, Captions, Mic, MonitorUp, Settings } from "lucide-react";
 
 import thirdeyeLogoUrl from "../../../../assets/logo.png";
 import type { View } from "../../app/view";
@@ -6,9 +6,7 @@ import type { View } from "../../app/view";
 export function Navigation({ view, setView, liveAvailable }: { view: View; setView: (view: View) => void; liveAvailable: boolean }) {
   const liveItems: Array<{ view: View; label: string; icon: typeof Activity }> = liveAvailable ? [{ view: "live" as const, label: "Live", icon: Captions }] : [];
   const items: Array<{ view: View; label: string; icon: typeof Activity }> = [
-    { view: "overview", label: "Overview", icon: Activity },
     { view: "capture", label: "Capture", icon: MonitorUp },
-    { view: "captures", label: "Captures", icon: ListChecks },
     ...liveItems,
     { view: "voice-notes", label: "Voice notes", icon: Mic },
     { view: "settings", label: "Settings", icon: Settings },

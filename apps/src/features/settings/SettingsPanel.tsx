@@ -3,15 +3,24 @@ import { MonitorUp, Terminal } from "lucide-react";
 import { ServiceStrip } from "../../components/services/ServiceStrip";
 import { Button, Card } from "../../components/ui";
 import { openLogsFolder, openScreenRecordingSettings } from "../../lib/services";
-import type { ServiceStatus } from "../../lib/types";
+import type { DesktopSession, ServiceStatus } from "../../lib/types";
+import { DesktopSessionsPanel } from "../capture/DesktopSessionsPanel";
 
 export function SettingsPanel({
+  desktops,
   serviceStatus,
+  onCreateDesktop,
+  onDesktopDestroyed,
+  onDesktopsRefresh,
   onRefresh,
   onStart,
   onStop,
 }: {
+  desktops: DesktopSession[];
   serviceStatus: ServiceStatus | null;
+  onCreateDesktop: (label: string) => Promise<void>;
+  onDesktopDestroyed: () => Promise<void>;
+  onDesktopsRefresh: () => Promise<void>;
   onRefresh: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -19,6 +28,7 @@ export function SettingsPanel({
   return (
     <div className="grid-two">
       <ServiceStrip onRefresh={onRefresh} onStart={onStart} onStop={onStop} status={serviceStatus} />
+      <DesktopSessionsPanel desktops={desktops} onCreate={onCreateDesktop} onDestroyed={onDesktopDestroyed} onRefresh={onDesktopsRefresh} />
       <Card>
         <p className="eyebrow">macOS access</p>
         <h2>Local tools</h2>

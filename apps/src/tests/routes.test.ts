@@ -4,10 +4,8 @@ import test from "node:test";
 import { hashForView, viewFromHash, type View } from "../app/view";
 
 const expectedHashes: Record<View, string> = {
-  overview: "#/",
   capture: "#/capture",
   live: "#/live",
-  captures: "#/captures",
   "voice-notes": "#/voice-notes",
   settings: "#/settings",
 };
@@ -20,14 +18,14 @@ test("workspace views have stable hash routes", () => {
 });
 
 test("workspace routes decode current and legacy hashes", () => {
-  assert.equal(viewFromHash(""), "overview");
-  assert.equal(viewFromHash("#/"), "overview");
+  assert.equal(viewFromHash(""), "capture");
+  assert.equal(viewFromHash("#/"), "capture");
   assert.equal(viewFromHash("#/capture"), "capture");
   assert.equal(viewFromHash("#/live"), "live");
-  assert.equal(viewFromHash("#/captures"), "captures");
+  assert.equal(viewFromHash("#/captures"), "capture");
   assert.equal(viewFromHash("#/voice-notes"), "voice-notes");
   assert.equal(viewFromHash("#/settings"), "settings");
-  assert.equal(viewFromHash("#/dashboard"), "overview");
-  assert.equal(viewFromHash("#/jobs"), "captures");
-  assert.equal(viewFromHash("#/missing"), "overview");
+  assert.equal(viewFromHash("#/dashboard"), "capture");
+  assert.equal(viewFromHash("#/jobs"), "capture");
+  assert.equal(viewFromHash("#/missing"), "capture");
 });

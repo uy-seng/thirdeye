@@ -103,7 +103,8 @@ restart_gateway() {
 
   (
     cd "${ROOT_DIR}"
-    docker compose -f infra/compose.yaml --profile openclaw up -d --force-recreate --no-deps openclaw
+    docker compose --project-name infra -f infra/compose.yaml --profile openclaw down --remove-orphans >/dev/null 2>&1 || true
+    docker compose --project-name thirdeye -f infra/compose.yaml --profile openclaw up -d --force-recreate --no-deps openclaw
   )
 }
 
